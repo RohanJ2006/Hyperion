@@ -1,28 +1,102 @@
 use crate::constants::{J2_PERTURBATION, RADIUS_OF_EARTH, STANDARD_GRAVITATIONAL_PARAMETER};
-use nalgebra::Vector3;
-use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-pub struct StateVector {
-    pub position: Vector3<f64>, // Position vector for ECI in (km)
-    pub velocity: Vector3<f64>, // Velocity vector for ECI in (km/s)
+pub struct StateVector { // Struct for the JSON data we receive 
+    // Position vectors (x, y, z)
+    pub x: Vec<f64>, 
+    pub y: Vec<f64>,
+    pub z: Vec<f64>,
+
+    // Velocity vectors (Vx, Vy, Vz)
+    pub v_x: Vec<f64>, 
+    pub v_y: Vec<f64>, 
+    pub v_z: Vec<f64>,
+
+    pub apogee: Vec<f64>, // Apogee of the object (max altitude)
+    pub perigee: Vec<f64>, // Perigee of the object (min altitude)
 }
 
-pub fn orbital_propagation(position_vector: &Vector3<f64>) -> Vector3<f64> {
-    let position_norm = position_vector.norm(); // Magnitude of position vector
-    let position_norm_squared = position_norm.powi(2); // Square of magnitude of position vector
+impl StateVector { // Implementation of methods for StateVector
+    pub fn new(capacity: usize) -> Self { // Pass self for capacity
+        Self {
+            x: Vec::with_capacity(capacity), 
+            y: Vec::with_capacity(capacity),
+            z: Vec::with_capacity(capacity),
 
-    let keplerian_orbit = -(STANDARD_GRAVITATIONAL_PARAMETER / (position_norm_squared * position_norm)) * position_vector; // Two body value of keplerian orbit, the first part of the equation
+            v_x: Vec::with_capacity(capacity),
+            v_y: Vec::with_capacity(capacity),
+            v_z: Vec::with_capacity(capacity),
 
-    let j2_left_coefficient = 1.5 * J2_PERTURBATION * STANDARD_GRAVITATIONAL_PARAMETER * RADIUS_OF_EARTH.powi(2) / position_norm.powi(5); // The first part of the j2 acceleration vector equation which will substract kepler orbit
-    
-    let z_over_r = 5.0 * (position_vector.z.powi(2) / position_norm_squared); // Common value in the matrix 5z^2 / |r|^2
+            apogee: Vec::with_capacity(capacity),
+            perigee: Vec::with_capacity(capacity),
+        }
+    }
 
-    let x_component = j2_left_coefficient * position_vector.x * (z_over_r - 1.0); // X component of the matrix
-    let y_component = j2_left_coefficient * position_vector.y * (z_over_r - 1.0); // Y component of the matrix
-    let z_component = j2_left_coefficient * position_vector.z * (z_over_r - 3.0); // Z component of the matrix
+    pub fn push_states(&mut self, x: f64, y: f64, z: f64, v_x: f64, v_y: f64, v_z: f64) { // Push the object states(values) from JSON data
+        self.x.push(x); 
+        self.y.push(y);
+        self.z.push(z);
 
-    let j2_acceleration_vector = Vector3::new(x_component, y_component, z_component); // The vector form of the x, y, z components to form the j2 acceleration vector
+        self.v_x.push(v_x);
+        self.v_y.push(v_y);
+        self.v_z.push(v_z);
 
-    keplerian_orbit + j2_acceleration_vector // Return the value of both by adding them, no need to explicitly add return keyword
+        self.apogee.push(0.0); // Push 0.0 because we need to compute it
+        self.perigee.push(0.0); // Push 0.0 because we need to compute it
+    }
+
+    pub fn compute_apogee_perigee(&mut self) { // Compute values for apogee and perigee
+        let total_objects = self.x.len();
+        
+        // Use assert! macro to make LLVM to remove bound checks so if one check goes x.len() is equal to all these, it will never check for length again saving CPU time
+        assert!(
+            self.y.len() == total_objects && 
+            self.z.len() == total_objects && 
+            self.v_x.len() == total_objects && 
+            self.v_y.len() == total_objects && 
+            self.v_z.len() == total_objects &&
+            self.apogee.len() == total_objects &&
+            self.perigee.len() == total_objects
+        );
+
+        // Loop through all objects
+        for i in 0..total_objects {
+            // Position vector
+            let x = self.x[i];
+            let y = self.y[i];
+            let z = self.z[i];
+
+            // Velocity vector
+            let v_x = self.v_x[i];
+            let v_y = self.v_y[i];
+            let v_z = self.v_z[i];
+
+            let r_square = x*x + y*y + z*z; // Square of position vector
+            let mag_r = r_square.sqrt(); // Magnitude of position vector
+
+            let v_square = v_x * v_x + v_y * v_y + v_z * v_z; // Square of velocity vector
+
+            let specific_orbital_energy = 0.5 * v_square - STANDARD_GRAVITATIONAL_PARAMETER / mag_r; // Specific orbital energy being the total mechanical energy of the object
+
+            // If divide by 0 error, they simply wont collide
+            if specific_orbital_energy >= 0.0 {
+                self.perigee[i] = f64::MAX;
+                self.apogee[i] = f64::MAX;
+                continue;
+            }
+
+            let semi_major_axis = - STANDARD_GRAVITATIONAL_PARAMETER / (2.0 * specific_orbital_energy); // Semi major axis is half of the longest diameter of the ellipse
+            
+            // Angular momentum
+            let h_x = y * v_z - z * v_y;
+            let h_y = z * v_x - x * v_z;
+            let h_z = x * v_y - y * v_x;
+
+            let h_square = h_x * h_x + h_y * h_y + h_z * h_z; // Square of angular momentum
+
+            let eccentricity = (1.0 + (2.0 * specific_orbital_energy * h_square) / (STANDARD_GRAVITATIONAL_PARAMETER * STANDARD_GRAVITATIONAL_PARAMETER)).sqrt(); // Eccentricity is how much the object deviates from its path
+
+            self.perigee[i] = semi_major_axis * (1.0 - eccentricity); // Computed the value of perigee
+            self.apogee[i] = semi_major_axis * (1.0 + eccentricity); // Computed the value of apogee
+        }
+    }
 }
