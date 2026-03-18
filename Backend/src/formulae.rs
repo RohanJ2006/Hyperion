@@ -1,6 +1,7 @@
 use crate::constants::{J2_PERTURBATION, RADIUS_OF_EARTH, STANDARD_GRAVITATIONAL_PARAMETER};
 
-pub struct StateVector { // Struct for the JSON data we receive 
+// Struct for the JSON data we receive
+pub struct StateVector {  
     // Position vectors (x, y, z)
     pub x: Vec<f64>, 
     pub y: Vec<f64>,
@@ -11,12 +12,14 @@ pub struct StateVector { // Struct for the JSON data we receive
     pub v_y: Vec<f64>, 
     pub v_z: Vec<f64>,
 
-    pub apogee: Vec<f64>, // Apogee of the object (max altitude)
-    pub perigee: Vec<f64>, // Perigee of the object (min altitude)
+    pub apogee: Vec<f64>,
+    pub perigee: Vec<f64>, 
 }
 
-impl StateVector { // Implementation of methods for StateVector
-    pub fn new(capacity: usize) -> Self { // Pass self for capacity
+// Implementation of methods for StateVector
+impl StateVector {
+    // Pass self for capacity
+    pub fn new(capacity: usize) -> Self { 
         Self {
             x: Vec::with_capacity(capacity), 
             y: Vec::with_capacity(capacity),
@@ -31,7 +34,8 @@ impl StateVector { // Implementation of methods for StateVector
         }
     }
 
-    pub fn push_states(&mut self, x: f64, y: f64, z: f64, v_x: f64, v_y: f64, v_z: f64) { // Push the object states(values) from JSON data
+    // Push the object states(values) from JSON data
+    pub fn push_states(&mut self, x: f64, y: f64, z: f64, v_x: f64, v_y: f64, v_z: f64) {
         self.x.push(x); 
         self.y.push(y);
         self.z.push(z);
@@ -40,11 +44,13 @@ impl StateVector { // Implementation of methods for StateVector
         self.v_y.push(v_y);
         self.v_z.push(v_z);
 
-        self.apogee.push(0.0); // Push 0.0 because we need to compute it
-        self.perigee.push(0.0); // Push 0.0 because we need to compute it
+        // Push 0.0 because we need to compute it
+        self.apogee.push(0.0);
+        self.perigee.push(0.0);
     }
 
-    pub fn compute_apogee_perigee(&mut self) { // Compute values for apogee and perigee
+    // Compute values for apogee and perigee
+    pub fn compute_apogee_perigee(&mut self) { 
         let total_objects = self.x.len();
         
         // Use assert! macro to make LLVM to remove bound checks so if one check goes x.len() is equal to all these, it will never check for length again saving CPU time
@@ -70,12 +76,17 @@ impl StateVector { // Implementation of methods for StateVector
             let v_y = self.v_y[i];
             let v_z = self.v_z[i];
 
-            let r_square = x*x + y*y + z*z; // Square of position vector
-            let mag_r = r_square.sqrt(); // Magnitude of position vector
+            // Square of position vector
+            let r_square = x*x + y*y + z*z;
 
-            let v_square = v_x * v_x + v_y * v_y + v_z * v_z; // Square of velocity vector
+            // Magnitude of position vector
+            let mag_r = r_square.sqrt();
 
-            let specific_orbital_energy = 0.5 * v_square - STANDARD_GRAVITATIONAL_PARAMETER / mag_r; // Specific orbital energy being the total mechanical energy of the object
+            // Square of velocity vector
+            let v_square = v_x * v_x + v_y * v_y + v_z * v_z;
+
+            // Specific orbital energy being the total mechanical energy of the object
+            let specific_orbital_energy = 0.5 * v_square - STANDARD_GRAVITATIONAL_PARAMETER / mag_r;
 
             // If divide by 0 error, they simply wont collide
             if specific_orbital_energy >= 0.0 {
@@ -84,19 +95,24 @@ impl StateVector { // Implementation of methods for StateVector
                 continue;
             }
 
-            let semi_major_axis = - STANDARD_GRAVITATIONAL_PARAMETER / (2.0 * specific_orbital_energy); // Semi major axis is half of the longest diameter of the ellipse
+            // Semi major axis is half of the longest diameter of the ellipse
+            let semi_major_axis = - STANDARD_GRAVITATIONAL_PARAMETER / (2.0 * specific_orbital_energy);
             
             // Angular momentum
             let h_x = y * v_z - z * v_y;
             let h_y = z * v_x - x * v_z;
             let h_z = x * v_y - y * v_x;
 
-            let h_square = h_x * h_x + h_y * h_y + h_z * h_z; // Square of angular momentum
+            // Square of angular momentum
+            let h_square = h_x * h_x + h_y * h_y + h_z * h_z;
 
-            let eccentricity = (1.0 + (2.0 * specific_orbital_energy * h_square) / (STANDARD_GRAVITATIONAL_PARAMETER * STANDARD_GRAVITATIONAL_PARAMETER)).sqrt(); // Eccentricity is how much the object deviates from its path
+            // Eccentricity is how much the object deviates from its path
+            let eccentricity = (1.0 + (2.0 * specific_orbital_energy * h_square) / (STANDARD_GRAVITATIONAL_PARAMETER * STANDARD_GRAVITATIONAL_PARAMETER)).sqrt();
 
-            self.perigee[i] = semi_major_axis * (1.0 - eccentricity); // Computed the value of perigee
-            self.apogee[i] = semi_major_axis * (1.0 + eccentricity); // Computed the value of apogee
+            // Computed the value of perigee
+            self.perigee[i] = semi_major_axis * (1.0 - eccentricity);
+            // Computed the value of apogee
+            self.apogee[i] = semi_major_axis * (1.0 + eccentricity);
         }
     }
 }
