@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hyperion Command Center</title>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./src/style.css">
+  </head>
+  
+  <body class="font-inter">
+    <div id="dashboard">
+      <header>
+        <div class="logo-text">HYPERION COMMAND CENTER</div>
+        <div id="clock" class="status-indicator"></div>
+      </header>
+    
+      <div id="main-container">
+        <div id="Ground-Track" class="panel">
+          <div class="panel-header">GLOBAL ORBITAL TRACKER</div>
+          <div class="canvas-container" id="pixi-container">
+          </div>
+        </div>
+
+        <div id="Polar-Chart" class="panel">
+          <div class="panel-header">CONJUNCTION PROXIMITY // TCA</div>
+          <div class="canvas-container">
+            <canvas id="bullseye-canvas"></canvas>
+          </div>
+        </div>
+
+        <div id="Heatmaps" class="panel">
+          <div class="panel-header">FLEET TELEMETRY // FUEL CONSUMPTION</div>
+          <div class="canvas-container">
+            <canvas id="heatmap-canvas"></canvas>
+          </div>
+        </div>
+
+        <div id="Maneuver-Timeline" class="panel">
+          <div class="panel-header">AUTOMATED MANEUVER SCHEDULER</div>
+          <div class="canvas-container" id="timeline-container">
+            </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+</body>
+</html>
