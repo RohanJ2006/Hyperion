@@ -1,3 +1,6 @@
+use std::f64::consts::PI;
+use crate::constants::{RADIUS_OF_EARTH, EARTH_ECCENTRICITY_SQUARED, EARTH_ROTATION_ANGLE, EARTH_ROTATION_RATE, J2000_UNIX_EPOCH};
+
 // Calculates the magnitude (length) of a 3D Vector
 #[inline(always)]
 pub fn magnitude(v: (f64, f64, f64)) -> f64 {
@@ -87,4 +90,69 @@ pub fn rtn_to_eci(
         radial_unit_vector.1 * delta_v.0 + transverse_unit_vector.1 * delta_v.1 + normal_unit_vector.1 * delta_v.2,
         radial_unit_vector.2 * delta_v.0 + transverse_unit_vector.2 * delta_v.1 + normal_unit_vector.2 * delta_v.2
     )
+}
+
+
+// Calculates Greenwich Mean Sidereal Time (GMST) in radians from Unix Timestamp
+#[inline(always)]
+pub fn calculate_gmst(unix_timestamp: f64) -> f64 {
+    let days_since_j2000 = (unix_timestamp - J2000_UNIX_EPOCH) / 86400.0; // keeping everything f64 cause rust is strictly typed
+    let mut gmst = 2.0 * PI * (EARTH_ROTATION_ANGLE + EARTH_ROTATION_RATE * days_since_j2000);
+    
+    // Normalize to 0 -> 2PI
+    gmst %= 2.0 * PI;
+    if gmst < 0.0 {
+        gmst += 2.0 * PI;
+    }
+    gmst
+}
+
+// Converts Earth-Centered Inertial (ECI) to Earth-Centered, Earth-Fixed (ECEF)
+#[inline(always)]
+pub fn eci_to_ecef(position: (f64, f64, f64), gmst: f64) -> (f64, f64, f64) {
+    let cos_gmst = gmst.cos();
+    let sin_gmst = gmst.sin();
+
+    // Rotate around the Z-axis by the GMST angle
+    (
+        position.0 * cos_gmst + position.1 * sin_gmst,
+        -position.0 * sin_gmst + position.1 * cos_gmst,
+        position.2 // Z remains unchanged (ignoring polar motion)
+    )
+}
+
+// Converts ECEF to Geodetic (Latitude, Longitude, Altitude)
+// Returns: (Latitude in radians, Longitude in radians, Altitude in km)
+pub fn ecef_to_geodetic(ecef: (f64, f64, f64)) -> (f64, f64, f64) {
+    let (x, y, z) = ecef;
+    
+    // Longitude is a straight forward calculation (no iterations required)
+    let longitude = y.atan2(x);
+    
+    let p = (x * x + y * y).sqrt();
+    
+    // Initial guess for latitude assuming a spherical Earth (only seed)
+    // This is the starting point of our Newton-Raphson method
+    let mut latitude = z.atan2(p * (1.0 - EARTH_ECCENTRICITY_SQUARED));
+    let mut n = 0.0;
+    
+    // 5 Iterations are enough as they provide millimeter of precision
+    for _ in 0..5 {
+        let sin_lat = latitude.sin();
+        n = RADIUS_OF_EARTH / (1.0 - EARTH_ECCENTRICITY_SQUARED * sin_lat * sin_lat).sqrt();
+        latitude = (z + n * EARTH_ECCENTRICITY_SQUARED * sin_lat).atan2(p);
+    }
+    
+    // Final altitude calculation
+    let altitude = p / latitude.cos() - n;
+    
+    (latitude, longitude, altitude) // latitude, longitude are returned in radians
+}
+
+// Wrapper function to go straight from ECI to Geodetic
+// Here we get the unix_timestamp after converting the ISO-8601 from the telementry API
+pub fn eci_to_geodetic(position: (f64, f64, f64), unix_timestamp: f64) -> (f64, f64, f64) {
+    let gmst = calculate_gmst(unix_timestamp);
+    let ecef = eci_to_ecef(position, gmst);
+    ecef_to_geodetic(ecef)
 }
