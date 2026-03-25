@@ -1,5 +1,5 @@
 use std::f64::consts::PI;
-use crate::constants::{RADIUS_OF_EARTH, EARTH_ECCENTRICITY_SQUARED, EARTH_ROTATION_ANGLE, EARTH_ROTATION_RATE, J2000_UNIX_EPOCH};
+use crate::constants::*;
 
 // Calculates the magnitude (length) of a 3D Vector
 #[inline(always)]
@@ -155,4 +155,28 @@ pub fn eci_to_geodetic(position: (f64, f64, f64), unix_timestamp: f64) -> (f64, 
     let gmst = calculate_gmst(unix_timestamp);
     let ecef = eci_to_ecef(position, gmst);
     ecef_to_geodetic(ecef)
+}
+
+// Computes the J2 acceleration for the satellie
+pub fn j2_acceleration(x: f64, y: f64, z: f64) -> (f64, f64, f64) {
+    let r2 = x * x + y * y + z * z;
+    let r = r2.sqrt();
+    let r3 = r2 * r;
+    let r5 = r3 * r2;
+
+    // Represents the gravitational pull of a perfect spherical object
+    let gravity_coefficient = STANDARD_GRAVITATIONAL_PARAMETER / r3;
+
+    // Square of the sine of the satellite's latitude (common part of the matrix in eq)
+    let z_ratio = (z * z) / r2;
+
+    // Coefficient of j2 which acts on the orbit of satellite
+    let j2_coefficient = 1.5 * J2_PERTURBATION * STANDARD_GRAVITATIONAL_PARAMETER * (RADIUS_OF_EARTH * RADIUS_OF_EARTH) / r5;
+
+    // The final 3D acceleration vector
+    let ax = - gravity_coefficient * x + j2_coefficient * x * (5.0 * z_ratio - 1.0);
+    let ay = - gravity_coefficient * y + j2_coefficient * y * (5.0 * z_ratio - 1.0);
+    let az = - gravity_coefficient * z + j2_coefficient * z * (5.0 * z_ratio - 3.0);
+
+    (ax, ay, az)
 }
