@@ -1,4 +1,4 @@
-const ENTITY_STRIDE: usize = 6;
+const ENTITY_STRIDE: usize = 7;
 const MAX_ENTITIES: usize = 25_000;
 const BUFFER_LEN: usize = MAX_ENTITIES * ENTITY_STRIDE;
 
