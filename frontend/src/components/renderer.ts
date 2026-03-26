@@ -1,8 +1,11 @@
-import { Application, Assets, Sprite, Texture, Rectangle, Container } from 'pixi.js';
+import { Application, Assets, Sprite, Texture, Rectangle, Container , Graphics } from 'pixi.js';
 
 // [0: ID, 1: Lat, 2: Lon, 3: Alt, 4: X, 5: Y, 6: TYPE]
 const ENTITY_STRIDE = 7; 
 const MAX_ENTITIES = 25_000;
+
+const HISTORY_LENGTH = 120; // Number of historical frames to keep per satellite
+const satelliteHistory = new Map<number, {x: number, y: number}[]>();
 
 export async function pixiInit(sharedMemory: Float64Array) { 
   const container = document.getElementById('pixi-container') as HTMLElement || null;
@@ -35,6 +38,72 @@ export async function pixiInit(sharedMemory: Float64Array) {
   entityContainer.x = -MapTexture.width / 2;
   entityContainer.y = -MapTexture.height / 2;
   mapSprite.addChild(entityContainer);
+
+  // 2. The Trajectory Layer (NEW) 
+  const trajectoryLayer = new Graphics();
+  entityContainer.addChild(trajectoryLayer);
+
+  //NEW: The Terminator Line (Day/Night Shadow) 
+  const terminatorShadow = new Graphics();
+  // Add it BEFORE the sprites so it renders underneath them
+  entityContainer.addChild(terminatorShadow);
+
+  function updateTerminator() {
+    const now = new Date();
+    const mapWidth = MapTexture.width;
+    const mapHeight = MapTexture.height;
+
+    terminatorShadow.clear();
+
+    // 1. Calculate Sun's Position
+    const dayOfYear = Math.floor((now.getTime() - new Date(now.getFullYear(), 0, 0).getTime()) / 86400000);
+    const gamma = (2 * Math.PI / 365) * (dayOfYear - 1 + (now.getUTCHours() - 12) / 24);
+    
+    // Solar declination (approximate formula)
+    let declination = 0.006918 - 0.399912 * Math.cos(gamma) + 0.070257 * Math.sin(gamma) - 0.006758 * Math.cos(2 * gamma) + 0.000907 * Math.sin(2 * gamma);
+    // Prevent division by zero at equinoxes
+    if (declination === 0) declination = 0.00001; 
+
+    // Subsolar longitude (where the sun is currently overhead)
+    const timeOffset = (now.getUTCHours() + now.getUTCMinutes() / 60 + now.getUTCSeconds() / 3600) - 12;
+    const subsolarLonRad = -timeOffset * 15 * (Math.PI / 180);
+
+    // 2. Build the shadow polygon
+    const points: number[] = [];
+    
+    for (let lonDeg = -180; lonDeg <= 180; lonDeg += 2) {
+      const lonRad = lonDeg * (Math.PI / 180);
+
+      // Latitude of the terminator for this longitude
+      const latRad = Math.atan(-Math.cos(lonRad - subsolarLonRad) / Math.tan(declination));
+      const latDeg = latRad * (180 / Math.PI);
+
+      // Convert to Mercator X/Y (Mirroring your Rust backend logic exactly)
+      const x = ((lonDeg + 180) / 360) * mapWidth;
+      const clampedLat = Math.max(-85.051129, Math.min(85.051129, latDeg));
+      const clampedLatRad = clampedLat * (Math.PI / 180);
+      const mercN = Math.log(Math.tan((Math.PI / 4) + (clampedLatRad / 2)));
+      const y = (mapHeight / 2) * (1 - (mercN / Math.PI));
+
+      points.push(x, y);
+    }
+
+    // Close the polygon at the top or bottom depending on the season
+    const isNorthernSummer = declination > 0;
+    points.push(mapWidth, isNorthernSummer ? mapHeight : 0);
+    points.push(0, isNorthernSummer ? mapHeight : 0);
+
+    // Draw using PixiJS v8 syntax
+    terminatorShadow.poly(points);
+    terminatorShadow.fill({ color: 0x000000, alpha: 0.5 }); // 50% opacity black
+  }
+
+  // Draw the shadow immediately on load
+  updateTerminator();
+
+  // Update the shadow once a minute to match Earth's rotation, 
+  // entirely decoupled from the 60FPS render loop.
+  setInterval(updateTerminator, 60_000);
 
   // --- 3. The Texture Atlas (Performance Secret) ---
   // Draw both your purple satellite and a red debris dot on one hidden canvas
