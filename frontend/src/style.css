@@ -154,6 +154,13 @@ header {
   /* font-weight: 600; */
 }
 
+#fps-counter{
+  margin-left: 0.4rem;
+  font-size: small !important;
+  color:#94a3b8;
+  font-weight: lighter;
+}
+
 
 
 .panel-header span {
