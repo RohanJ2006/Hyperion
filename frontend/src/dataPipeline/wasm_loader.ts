@@ -13,7 +13,7 @@ export interface WasmCore {
 }
 
 export async function initWasmCore(): Promise<WasmCore> {
-  const response = await fetch('/math_engine.wasm');
+  const response = await fetch('/wasm_core.wasm');
   const bytes = await response.arrayBuffer();
 
   const { instance } = await WebAssembly.instantiate(bytes);
