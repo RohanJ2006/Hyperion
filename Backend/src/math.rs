@@ -157,6 +157,57 @@ pub fn eci_to_geodetic(position: (f64, f64, f64), unix_timestamp: f64) -> (f64, 
     ecef_to_geodetic(ecef)
 }
 
+// Converts Geodetic (Lat in rad, Lon in rad, Alt in km) to ECEF (x, y, z)
+pub fn geodetic_to_ecef(latitude: f64, longitude: f64, altitude: f64) -> (f64, f64, f64) {
+    let sin_lat = latitude.sin();
+    let cos_lat = latitude.cos();
+    let sin_lon = longitude.sin();
+    let cos_lon = longitude.cos();
+
+    // Normal radius of curvature
+    let n = RADIUS_OF_EARTH / (1.0 - EARTH_ECCENTRICITY_SQUARED * sin_lat * sin_lat).sqrt();
+
+    let x = (n + altitude) * cos_lat * cos_lon;
+    let y = (n + altitude) * cos_lat * sin_lon;
+    let z = (n * (1.0 - EARTH_ECCENTRICITY_SQUARED) + altitude) * sin_lat;
+
+    (x, y, z)
+}
+
+// Calculates the elevation angle (in degrees) of a satellite from a ground station
+pub fn calculate_elevation_angle(
+    sat_ecef: (f64, f64, f64),
+    gs_lat_rad: f64,
+    gs_lon_rad: f64,
+    gs_ecef: (f64, f64, f64),
+) -> f64 {
+    // 1. Calculate the slant range vector (Vector pointing from GS to Sat)
+    let slant_range = (
+        sat_ecef.0 - gs_ecef.0,
+        sat_ecef.1 - gs_ecef.1,
+        sat_ecef.2 - gs_ecef.2,
+    );
+
+    // 2. Calculate the local Zenith vector (Straight Up from the ground station)
+    // For a spherical approximation of the normal, we use the lat/lon of the GS
+    let zenith = (
+        gs_lat_rad.cos() * gs_lon_rad.cos(),
+        gs_lat_rad.cos() * gs_lon_rad.sin(),
+        gs_lat_rad.sin(),
+    );
+
+    // 3. Dot product of Slant Range and Zenith
+    let dot_prod = dot_product(slant_range, zenith);
+    let slant_magnitude = magnitude(slant_range);
+
+    // 4. Calculate Zenith Angle and convert to Elevation Angle
+    let zenith_angle_rad = (dot_prod / slant_magnitude).acos();
+    let elevation_rad = (PI / 2.0) - zenith_angle_rad;
+
+    // Return in degrees so we can easily compare against the CSV's Min_Elevation_Angle_deg
+    elevation_rad.to_degrees()
+}
+
 // Computes the J2 acceleration for the satellie
 pub fn j2_acceleration(x: f64, y: f64, z: f64) -> (f64, f64, f64) {
     let r2 = x * x + y * y + z * z;
