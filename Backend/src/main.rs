@@ -34,7 +34,13 @@ async fn main() {
     let state = AppState {
         engine: SimState::new(initial_capacity),
         id_to_index: HashMap::with_capacity(initial_capacity),
-        current_time_unix: 1773216000.0, // Default fallback (e.g., March 12, 2026)
+        // Default fallback (e.g., March 12, 2026)
+        // incase we get simulate_step before any telemetry data
+        // we fall back to this date instead of 1 Jan, 1970 (unix timestamp of 0)
+        // Here March 12, 2026 is used cause the PS has this timestamp across all its
+        // api request. Anyway we update this time when encountered with any telemetry
+        // data as we have to keep both the grader universe and our simulation in sync.
+        current_time_unix: 1773216000.0,
     };
     
     let shared_state: SharedState = Arc::new(RwLock::new(state));
