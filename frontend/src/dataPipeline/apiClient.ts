@@ -1,4 +1,3 @@
-
 export interface satelliteInformation{
   id : string,
   lat : number,
@@ -9,12 +8,31 @@ export interface satelliteInformation{
 
 export type debrisTuple = [string, number, number, number];
 
-export type IsoDateString = string;
+export type IsoDateString = string;  //ISO format
 
 export interface visualSnapshot{
   timestamp : IsoDateString,
   satellites : satelliteInformation[],
   debris_cloud : debrisTuple[]
+}
+
+export interface EfficiencyDatapoint {
+  timestamp: IsoDateString; 
+  avgFuel_kg: number;
+  collisionsAvoided: number;
+}
+
+export interface ManeuverEvent {
+  satelliteId: string;
+  type: 'BURN' | 'COAST';
+  startTime: IsoDateString; 
+  endTime: IsoDateString;   
+}
+
+export interface AnalyticsSnapshot {
+  timestamp: IsoDateString; 
+  efficiencyHistory: EfficiencyDatapoint[];
+  maneuvers: ManeuverEvent[];
 }
 
 const BASE_API = 'api/visualization';
@@ -59,4 +77,48 @@ function fallbackSnapshot():visualSnapshot{
   }
 
   return {timestamp , satellites , debris_cloud };
+}
+
+export async function fetchAnalytics(): Promise<AnalyticsSnapshot> {
+  try {
+    const res = await fetch('/api/visualization/analytics');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.warn("Analytics API offline, using fallback data.");
+    return generateFallbackAnalytics();
+  }
+}
+
+function generateFallbackAnalytics(): AnalyticsSnapshot {
+  const now = Date.now();
+  const history: EfficiencyDatapoint[] = [];
+  
+  // Generate 6 historical data points
+  for (let i = 5; i >= 0; i--) {
+    history.push({
+      timestamp: new Date(now - i * 60000).toISOString(),
+      avgFuel_kg: 48 - (5 - i) * 0.2, // Slowly draining
+      collisionsAvoided: Math.random() > 0.8 ? 1 : 0
+    });
+  }
+
+  return {
+    timestamp: new Date(now).toISOString(),
+    efficiencyHistory: history,
+    maneuvers: [
+      {
+        satelliteId: 'SAT-Alpha-01',
+        type: 'BURN',
+        startTime: new Date(now + 60000).toISOString(), // Starts in 60s
+        endTime: new Date(now + 120000).toISOString()   // Lasts 60s
+      },
+      {
+        satelliteId: 'SAT-Alpha-04',
+        type: 'BURN',
+        startTime: new Date(now + 180000).toISOString(),
+        endTime: new Date(now + 260000).toISOString()
+      }
+    ]
+  };
 }
