@@ -26,6 +26,17 @@ pub struct AppState {
 
 pub type SharedState = Arc<RwLock<AppState>>;
 
+// Ground Stations Data
+// Format: (Latitude, Longitude, Elevation in meters, Min Elevation Angle)
+const GROUND_STATIONS: &[(f64, f64, f64, f64)] = &[
+    (13.0333, 77.5167, 820.0, 5.0),     // GS-001: ISTRAC_Bengaluru
+    (78.2297, 15.4077, 400.0, 5.0),     // GS-002: Svalbard_Sat_Station
+    (35.4266, -116.8900, 1000.0, 10.0), // GS-003: Goldstone_Tracking
+    (-53.1500, -70.9167, 30.0, 5.0),    // GS-004: Punta_Arenas
+    (28.5450, 77.1926, 225.0, 15.0),    // GS-005: IIT_Delhi_Ground_Node
+    (-77.8463, 166.6682, 10.0, 5.0),    // GS-006: McMurdo_Station
+];
+
 #[tokio::main]
 async fn main() {
     // Initialize the engine to handle the 50 sats + 10,000+ debris
