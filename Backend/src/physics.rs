@@ -154,4 +154,41 @@ impl SimState {
             }
         });
     }
+
+    pub fn execute_maneuver(&mut self, target_id: &str, dv_eci: (f64, f64, f64)) -> Result<(), String> {
+        let (numeric_id, is_target_satellite) = parse_api_id(target_id);
+
+        if !is_target_satellite {
+            return Err("Cannot execute manuevers on debris".into());
+        }
+
+        let index_position = self.id.iter()
+            .zip(self.is_satellite.iter())
+            .position(|(&id, &is_sat)| id == numeric_id && is_sat);
+
+        let index = match index_option {
+            Some(i) => i,
+            None => return Err("Satellite not found".into());
+        };
+        
+        let magnitude_dv = magnitude(dv_eci);
+
+        if magnitude_dv > MAX_THRUST_DELTA {
+            return Err("Thrust exceeds maximum allowed limits".into());
+
+        }
+
+        let fuel_burned = calculate_fuel_burn(self.mass[index], magnitude_dv);
+
+        if self.mass[index] - DRY_MASS < fuel burned {
+            return Err("Insufficient fuel for manuever".into());
+        }
+
+        self.mass[index] -= fuel_burned;
+        self.vx[index] += dv_eci.0;
+        self.vy[index] += dv_eci.1;
+        self.vz[index] += dv_eci.2;
+
+        Ok(())
+    }
 }
