@@ -231,3 +231,16 @@ pub fn j2_acceleration(x: f64, y: f64, z: f64) -> (f64, f64, f64) {
 
     (ax, ay, az)
 }
+
+// Calculate fuel burn
+pub fn calculate_fuel_burn(current_mass: f64, dv: f64) -> f64 {
+    let dv_s = dv * 1000.0;
+
+    let exhaust_velocity = SPECIFIC_IMPULSE * STANDARD_GRAVITY_M;
+
+    let mass_fraction = (-dv_s / exhaust_velocity).exp();
+
+    let final_mass = current_mass * mass_fraction;
+
+    current_mass - final_mass
+}
