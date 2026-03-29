@@ -11,3 +11,5 @@ serde_json = "1.0" # Used for outgoing responses
 simd-json = "0.13" # The native Rust SIMD JSON parser for high-speed ingestion
 bytes = "1.0"      # For reading raw request streams
 chrono = "0.4" # for time parsing
+twox-hash = "1.6"
+rayon = "1.10"
