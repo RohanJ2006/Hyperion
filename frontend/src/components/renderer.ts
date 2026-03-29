@@ -4,8 +4,6 @@ import { Application, Assets, Sprite, Texture, Rectangle, Container , Graphics }
 const ENTITY_STRIDE = 7; 
 const MAX_ENTITIES = 25_000;
 
-const HISTORY_LENGTH = 120; // Number of historical frames to keep per satellite
-const satelliteHistory = new Map<number, {x: number, y: number}[]>();
 
 export async function pixiInit(sharedMemory: Float64Array) { 
   const container = document.getElementById('pixi-container') as HTMLElement || null;
@@ -137,7 +135,6 @@ const debrisTexture = new Texture({
   for (let i = 0; i < MAX_ENTITIES; i++) {
     const sprite = new Sprite(debrisTexture); // Default texture
     sprite.anchor.set(0.5);
-    sprite.scale.set(5);
     sprite.visible = false; // Hide until data arrives
     entityContainer.addChild(sprite);
     sprites[i] = sprite;
