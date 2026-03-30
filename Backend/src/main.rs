@@ -9,6 +9,9 @@ use axum::{
     routing::{get, post},
     Router,
 };
+
+use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -51,15 +54,24 @@ async fn main() {
 
     let shared_state: SharedState = Arc::new(RwLock::new(state));
 
+    let cors = CorsLayer::new()
+    .allow_origin(Any)
+    .allow_methods(Any)
+    .allow_headers(Any);
+
     let app = Router::new()
         .route("/api/telemetry",               post(ingest_telemetry))
         .route("/api/maneuver/schedule",        post(schedule_maneuver))
         .route("/api/simulate/step",            post(simulate_step))
         .route("/api/visualization/snapshot",  get(get_snapshot))
+        .fallback_service(ServeDir::new("../frontend/dist"))
+        .layer(cors)
         .with_state(shared_state);
 
     let bind_addr = format!("0.0.0.0:{}", API_PORT);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
+
+    println!("Backend is live and listening on http://{}", bind_addr);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async {

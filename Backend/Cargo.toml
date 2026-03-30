@@ -13,3 +13,4 @@ bytes = "1.0"      # For reading raw request streams
 chrono = "0.4" # for time parsing
 twox-hash = "1.6"
 rayon = "1.10"
+tower-http = { version = "0.6.8", features = ["cors", "fs"] }

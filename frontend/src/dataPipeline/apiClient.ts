@@ -72,7 +72,11 @@ export interface EfficiencyPoint {
  
 export const efficiencyHistory: EfficiencyPoint[] = [];
  
-const BASE_API = 'api/visualization';
+// const BASE_API = 'api/visualization';
+
+const isDev = import.meta.env.DEV;
+const BASE_URL = isDev ? 'http://localhost:8000' : '';
+const BASE_API = `${BASE_URL}/api/visualization`;
  
 // ─── SNAPSHOT FETCH ───────────────────────────────────────────────────────────
 export async function fetchSnapshot(): Promise<visualSnapshot> {
@@ -89,15 +93,21 @@ export async function fetchSnapshot(): Promise<visualSnapshot> {
 }
  
 // ─── ANALYTICS FETCH ──────────────────────────────────────────────────────────
+// export async function fetchAnalytics(): Promise<AnalyticsSnapshot> {
+//   try {
+//     const res = await fetch('/api/visualization/analytics');
+//     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+//     return await res.json();
+//   } catch (error) {
+//     console.warn('Analytics API offline, using fallback.');
+//     return generateFallbackAnalytics();
+//   }
+// }
+
 export async function fetchAnalytics(): Promise<AnalyticsSnapshot> {
-  try {
-    const res = await fetch('/api/visualization/analytics');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } catch (error) {
-    console.warn('Analytics API offline, using fallback.');
-    return generateFallbackAnalytics();
-  }
+  // We CANNOT fetch from the backend because the PDF does not allow an analytics API.
+  // Instead, we use the local generator to feed the UI charts.
+  return generateFallbackAnalytics();
 }
 
 // ─── FALLBACK SNAPSHOT ────────────────────────────────────────────────────────
