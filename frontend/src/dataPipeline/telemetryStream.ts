@@ -27,7 +27,10 @@ export function initializeTelemetryStream (
 
     ws.onmessage = (event:MessageEvent<ArrayBuffer>) => {
       const incoming = new Float64Array(event.data);
-      const entityCount = (incoming.length / floatsPerEntity) | 0;
+      const safeIncoming = incoming.length > sharedMemory.length 
+        ? incoming.subarray(0, sharedMemory.length) 
+        : incoming;
+      const entityCount = (safeIncoming.length / floatsPerEntity) | 0;
 
       sharedMemory.set(incoming);
 

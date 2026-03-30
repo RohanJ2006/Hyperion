@@ -18,28 +18,44 @@
       <div id="main-container">
         <div id="Ground-Track" class="panel">
           <div class="panel-header">GLOBAL ORBITAL TRACKER</div>
+          <span id="fps-counter">FPS = </span>
           <div class="canvas-container" id="pixi-container">
           </div>
         </div>
 
         <div id="Polar-Chart" class="panel">
-          <div class="panel-header">CONJUNCTION PROXIMITY // TCA</div>
-          <div class="canvas-container">
+          <div class="panel-header">
+            <span>CONJUNCTION PROXIMITY // TCA</span>
+            <select id="satellite-select" class="sat-dropdown">
+              <option value="">— SELECT SAT —</option>
+            </select>
+          </div>
+          <div class="canvas-container" id="bullseye-container">
             <canvas id="bullseye-canvas"></canvas>
           </div>
         </div>
 
         <div id="Heatmaps" class="panel">
           <div class="panel-header">FLEET TELEMETRY // FUEL CONSUMPTION</div>
-          <div class="canvas-container">
-            <canvas id="heatmap-canvas"></canvas>
+          <div class="heatmap-layout">
+            <div class="fuel-list-panel">
+              <div class="fuel-list-header">FUEL RESERVES</div>
+              <div id="fuel-list" class="fuel-list"></div>
+            </div>
+            <div class="efficiency-panel">
+              <div class="fuel-list-header">Δv CONSUMED vs COLLISIONS AVOIDED</div>
+              <div style="position: relative; flex: 1; min-height: 0;">
+                <canvas id="efficiency-canvas"></canvas>
+              </div>
+            </div>
           </div>
         </div>
 
         <div id="Maneuver-Timeline" class="panel">
           <div class="panel-header">AUTOMATED MANEUVER SCHEDULER</div>
-          <div class="canvas-container" id="timeline-container">
-            </div>
+          <div class="canvas-container">
+            <canvas id="timeline-canvas"></canvas> 
+          </div>
         </div>
       </div>
     </div>
