@@ -1,8 +1,9 @@
 mod api;
 mod constants;
-mod math;
+mod maths;
 mod models;
 mod physics;
+mod collision;
 
 use axum::{
     routing::{get, post},
@@ -12,59 +13,59 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use api::*;
-use physics::SimState;
+use crate::api::*;
+use crate::physics::SimState;
+use crate::collision::{SpatialGrid, ConjunctionEvent};
+use crate::constants::API_PORT;
 
-// ** The central state container shared across all asynchronous API threads **
+/// Central shared state for all async API handlers.
 pub struct AppState {
     pub engine: SimState,
-    // Maps the numeric ID to its exact index in the SoA vectors for O(1) updates
+    pub radar: SpatialGrid,
     pub id_to_index: HashMap<u32, usize>,
-    // Tracks current simulation time as a Unix Timestamp (seconds)
     pub current_time_unix: f64,
+    /// Cache of active CDM warnings from the last 24-hour prediction run.
+    /// Updated on every simulate/step call.
+    pub active_conjunctions: Vec<ConjunctionEvent>,
 }
 
 pub type SharedState = Arc<RwLock<AppState>>;
 
-// Ground Stations Data
-// Format: (Latitude, Longitude, Elevation in meters, Min Elevation Angle)
-const GROUND_STATIONS: &[(f64, f64, f64, f64)] = &[
-    (13.0333, 77.5167, 820.0, 5.0),     // GS-001: ISTRAC_Bengaluru
-    (78.2297, 15.4077, 400.0, 5.0),     // GS-002: Svalbard_Sat_Station
-    (35.4266, -116.8900, 1000.0, 10.0), // GS-003: Goldstone_Tracking
-    (-53.1500, -70.9167, 30.0, 5.0),    // GS-004: Punta_Arenas
-    (28.5450, 77.1926, 225.0, 15.0),    // GS-005: IIT_Delhi_Ground_Node
-    (-77.8463, 166.6682, 10.0, 5.0),    // GS-006: McMurdo_Station
-];
-
 #[tokio::main]
 async fn main() {
-    // Initialize the engine to handle the 50 sats + 10,000+ debris
-    let initial_capacity = 15000;
-    
+
+    // Pre-allocate for 50 satellites + 10,000+ debris objects with headroom
+    let initial_capacity = 15_000;
+
     let state = AppState {
         engine: SimState::new(initial_capacity),
+        // Cell size will be overridden dynamically in predict_conjunctions.
+        // The value here is only used for find_current_conjunctions (instant check).
+        radar: SpatialGrid::new(0.2, initial_capacity),
         id_to_index: HashMap::with_capacity(initial_capacity),
-        // Default fallback (e.g., March 12, 2026)
-        // incase we get simulate_step before any telemetry data
-        // we fall back to this date instead of 1 Jan, 1970 (unix timestamp of 0)
-        // Here March 12, 2026 is used cause the PS has this timestamp across all its
-        // api request. Anyway we update this time when encountered with any telemetry
-        // data as we have to keep both the grader universe and our simulation in sync.
-        current_time_unix: 1773216000.0,
+        // Fallback time (March 12, 2026) in case simulate/step arrives before telemetry.
+        // Matches the timestamp used throughout the problem statement examples.
+        current_time_unix: 1_773_216_000.0,
+        active_conjunctions: Vec::new(),
     };
-    
+
     let shared_state: SharedState = Arc::new(RwLock::new(state));
 
     let app = Router::new()
-        .route("/api/telemetry", post(ingest_telemetry))
-        .route("/api/maneuver/schedule", post(schedule_maneuver))
-        .route("/api/simulate/step", post(simulate_step))
-        .route("/api/visualization/snapshot", get(get_snapshot))
+        .route("/api/telemetry",               post(ingest_telemetry))
+        .route("/api/maneuver/schedule",        post(schedule_maneuver))
+        .route("/api/simulate/step",            post(simulate_step))
+        .route("/api/visualization/snapshot",  get(get_snapshot))
         .with_state(shared_state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
-    println!("Autonomous Constellation Manager API running on 0.0.0.0:8000");
-    
-    axum::serve(listener, app).await.unwrap();
+    let bind_addr = format!("0.0.0.0:{}", API_PORT);
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            tokio::signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
+        })
+        .await
+        .unwrap();
 }
+

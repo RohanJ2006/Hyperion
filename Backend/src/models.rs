@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize, Clone, Copy)]
 pub struct Vec3 { pub x: f64, pub y: f64, pub z: f64 }
 
-// *** 4.1 Telemetry Ingestion ***
+// Telemetry Ingestion ***
 #[derive(Debug, Deserialize)]
 pub struct TelemetryPayload {
     pub timestamp: String,
@@ -59,7 +59,7 @@ pub struct ManeuverResponse {
     pub validation: ManeuverValidation,
 }
 
-// *** 4.3 Simulation Step ***
+// Simulation Step
 #[derive(Debug, Deserialize)]
 pub struct StepPayload {
     pub step_seconds: f64,
@@ -73,7 +73,7 @@ pub struct StepResponse {
     pub maneuvers_executed: usize,
 }
 
-// *** 6.3 Visualization Snapshot ***
+// 6.3 Visualization Snapshot
 #[derive(Debug, Serialize)]
 pub struct SnapshotResponse {
     pub timestamp: String,
