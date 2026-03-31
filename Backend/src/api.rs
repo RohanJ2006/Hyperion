@@ -13,7 +13,6 @@ use crate::physics::{parse_api_id, ScheduleManeuver};
 use crate::maths::{eci_to_geodetic, eci_to_ecef, calculate_elevation_angle, calculate_fuel_burn, calculate_gmst, geodetic_to_ecef};
 use crate::conjunction::screen_from_sim_state;
 use crate::constants::*;
-use crate::AppState;
 use crate::SharedState;
 
 // Converts an ISO 8601 timestamp string to a Unix timestamp (f64 seconds).

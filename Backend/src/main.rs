@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 
 use crate::api::*;
 use crate::physics::SimState;
-use crate::conjunction::{ObjectSnapshot, ConjunctionEvent, hybrid_conjunction_screening};
+use crate::conjunction::{ConjunctionEvent};
 use crate::constants::API_PORT;
 
 /// Central shared state for all async API handlers.

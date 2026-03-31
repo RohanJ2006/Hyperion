@@ -345,8 +345,8 @@ fn brent_tca(a: &ObjectSnapshot, b: &ObjectSnapshot, lo: f64, hi: f64) -> (f64, 
     let mut fx = dist_at(a, b, x);
     let mut fw = fx;
     let mut fv = fx;
-    let mut d = 0.0;
-    let mut e = 0.0;
+    let mut d: f64 = 0.0;
+    let mut e: f64 = 0.0;
 
     for _ in 0..BRENT_MAX_ITER {
         let midpoint = 0.5 * (a_b + b_b);
