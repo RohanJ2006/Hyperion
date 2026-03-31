@@ -1,0 +1,16 @@
+[package]
+name = "hyperion"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full", "rt-multi-thread"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0" # Used for outgoing responses
+simd-json = "0.13" # The native Rust SIMD JSON parser for high-speed ingestion
+bytes = "1.0"      # For reading raw request streams
+chrono = "0.4" # for time parsing
+twox-hash = "1.6"
+rayon = "1.10"
+tower-http = { version = "0.6.8", features = ["cors", "fs"] }

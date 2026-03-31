@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hyperion Command Center</title>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./src/style.css">
+  </head>
+  
+  <body class="font-inter">
+    <div id="dashboard">
+      <header>
+        <div class="logo-text">HYPERION COMMAND CENTER</div>
+        <div id="clock" class="status-indicator"></div>
+      </header>
+    
+      <div id="main-container">
+        <div id="Ground-Track" class="panel">
+          <div class="panel-header">GLOBAL ORBITAL TRACKER</div>
+          <span id="fps-counter">FPS = </span>
+          <div class="canvas-container" id="pixi-container">
+          </div>
+        </div>
+
+        <div id="Polar-Chart" class="panel">
+          <div class="panel-header">
+            <span>CONJUNCTION PROXIMITY // TCA</span>
+            <select id="satellite-select" class="sat-dropdown">
+              <option value="">— SELECT SAT —</option>
+            </select>
+          </div>
+          <div class="canvas-container" id="bullseye-container">
+            <canvas id="bullseye-canvas"></canvas>
+          </div>
+        </div>
+
+        <div id="Heatmaps" class="panel">
+          <div class="panel-header">FLEET TELEMETRY // FUEL CONSUMPTION</div>
+          <div class="heatmap-layout">
+            <div class="fuel-list-panel">
+              <div class="fuel-list-header">FUEL RESERVES</div>
+              <div id="fuel-list" class="fuel-list"></div>
+            </div>
+            <div class="efficiency-panel">
+              <div class="fuel-list-header">Δv CONSUMED vs COLLISIONS AVOIDED</div>
+              <div style="position: relative; flex: 1; min-height: 0;">
+                <canvas id="efficiency-canvas"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="Maneuver-Timeline" class="panel">
+          <div class="panel-header">AUTOMATED MANEUVER SCHEDULER</div>
+          <div class="canvas-container">
+            <canvas id="timeline-canvas"></canvas> 
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+</body>
+</html>
