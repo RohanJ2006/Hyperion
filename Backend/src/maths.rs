@@ -305,3 +305,15 @@ pub fn calculate_fuel_burn(current_mass: f64, dv_km_s: f64) -> f64 {
     let mass_fraction = (-dv_m_s / exhaust_velocity).exp();
     current_mass * (1.0 - mass_fraction)
 }
+
+// This function is used by conjunction.rs file to replace the old propagate_linear
+pub fn propagate_rk4_to(
+    pos: (f64, f64, f64), vel: (f64, f64, f64), dt: f64,
+) -> ((f64, f64, f64), (f64, f64, f64)) {
+    let (x, y, z) = pos;
+    let (vx, vy, vz) = vel;
+
+    let (nx, ny, nz, nvx, nvy, nvz) = rk4_step(x, y, z, vx, vy, vz, dt);
+
+    ((nx, ny, nz), (nvx, nvy, nvz))
+}
