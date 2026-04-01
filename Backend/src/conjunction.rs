@@ -213,7 +213,8 @@ fn brent_tca(a: &ObjectSnapshot, b: &ObjectSnapshot, lo: f64, hi: f64) -> (f64, 
 /// Multi-window Brent: splits the horizon into half-period windows so we
 /// don't miss a second close approach later in the orbit.
 /// Approximate period from the average semi-major axis of the pair.
-fn brent_tca_multi(a: &ObjectSnapshot, b: &ObjectSnapshot, horizon_s: f64) -> (f64, f64) {
+/// Also using this brent tca method to calculate best burn in evaluate_autonomous_evasion in api.rs
+pub fn brent_tca_multi(a: &ObjectSnapshot, b: &ObjectSnapshot, horizon_s: f64) -> (f64, f64) {
     // Add this bypass for the instant check;
     if horizon_s <= 0.0 {
         return (0.0, dist_rk4(a, b, 0.0));

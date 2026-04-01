@@ -30,6 +30,8 @@ pub struct AppState {
     /// Cache of active CDM warnings from the last 24-hour prediction run.
     /// Updated on every simulate/step call.
     pub active_conjunctions: Vec<ConjunctionEvent>,
+    pub debris_avoided: usize,
+    pub last_screening_time: f64, // Track the simulation time of the last scan
 }
 
 pub type SharedState = Arc<RwLock<AppState>>;
@@ -49,6 +51,8 @@ async fn main() {
         // Matches the timestamp used throughout the problem statement examples.
         current_time_unix: 1_773_216_000.0,
         active_conjunctions: Vec::new(),
+        debris_avoided: 0,
+        last_screening_time: 0.0,
     };
 
     let shared_state: SharedState = Arc::new(RwLock::new(state));
