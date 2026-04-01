@@ -11,8 +11,8 @@ use simd_json::from_slice;
 use crate::models::*;
 use crate::physics::{parse_api_id, ScheduleManeuver};
 use crate::maths::{eci_to_geodetic, eci_to_ecef, calculate_elevation_angle, calculate_fuel_burn, calculate_gmst, geodetic_to_ecef};
+use crate::conjunction::screen_from_sim_state;
 use crate::constants::*;
-use crate::AppState;
 use crate::SharedState;
 
 // Converts an ISO 8601 timestamp string to a Unix timestamp (f64 seconds).
@@ -114,30 +114,30 @@ pub async fn simulate_step(
     let maneuvers_executed = app.engine.propagate_and_execute(payload.step_seconds, start_time);
 
     // 2. Instant collision check (actual collisions that occurred this tick)
-    let current_collisions = {
-        let AppState { ref mut radar, ref engine, .. } = *app;
-        radar.find_current_conjunctions(
-            &engine.id,
-            &engine.is_satellite,
-            &engine.x,
-            &engine.y,
-            &engine.z,
-        )
-    };
+    // We pass 0.0 for the horizon because we only care about right now
+    let current_collisions = screen_from_sim_state(
+        &app.engine.id,
+        &app.engine.is_satellite,
+        &app.engine.x, &app.engine.y, &app.engine.z,
+        &app.engine.vx, &app.engine.vy, &app.engine.vz,
+        0.0,
+    );
+
+    // Filter to only include collisions under the 100ms threshold
+    let actual_crashes: Vec<_> = current_collisions.into_iter()
+        .filter(|c| c.pca_km <= 0.100)
+        .collect();
 
     // 3. Run 24-hour predictive conjunction assessment
     // (updates the active CDM warning cache used by telemetry responses)
     {
-        const PREDICTION_SPS: f64 = 60.0; // 60-second sample steps over 24 hours
-        let AppState { ref radar, ref engine, ref mut active_conjunctions, .. } = *app;
-        *active_conjunctions = radar.predict_conjunctions(
+        let engine = &app.engine;
+        app.active_conjunctions = screen_from_sim_state(
             &engine.id,
             &engine.is_satellite,
             &engine.x, &engine.y, &engine.z,
             &engine.vx, &engine.vy, &engine.vz,
-            end_time,
             PREDICTION_WINDOW as f64,
-            PREDICTION_SPS,
         );
     }
 
@@ -155,7 +155,7 @@ pub async fn simulate_step(
     (StatusCode::OK, Json(StepResponse {
         status: "STEP_COMPLETE".to_string(),
         new_timestamp: new_time_iso,
-        collisions_detected: current_collisions.len(),
+        collisions_detected: actual_crashes.len(),
         maneuvers_executed,
     }))
 }

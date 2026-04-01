@@ -3,7 +3,7 @@ mod constants;
 mod maths;
 mod models;
 mod physics;
-mod collision;
+mod conjunction;
 
 use axum::{
     routing::{get, post},
@@ -18,13 +18,12 @@ use tokio::sync::RwLock;
 
 use crate::api::*;
 use crate::physics::SimState;
-use crate::collision::{SpatialGrid, ConjunctionEvent};
+use crate::conjunction::{ConjunctionEvent};
 use crate::constants::API_PORT;
 
 /// Central shared state for all async API handlers.
 pub struct AppState {
     pub engine: SimState,
-    pub radar: SpatialGrid,
     pub id_to_index: HashMap<u32, usize>,
     pub current_time_unix: f64,
     /// Cache of active CDM warnings from the last 24-hour prediction run.
@@ -44,7 +43,6 @@ async fn main() {
         engine: SimState::new(initial_capacity),
         // Cell size will be overridden dynamically in predict_conjunctions.
         // The value here is only used for find_current_conjunctions (instant check).
-        radar: SpatialGrid::new(0.2, initial_capacity),
         id_to_index: HashMap::with_capacity(initial_capacity),
         // Fallback time (March 12, 2026) in case simulate/step arrives before telemetry.
         // Matches the timestamp used throughout the problem statement examples.
