@@ -1,14 +1,17 @@
 import requests
-from skyfield.api import load, EarthSatellite
+from skyfield.api import load
 from datetime import datetime, timezone
 import time
 
 # --- Configuration ---
-API_ENDPOINT = "http://0.0.0.0:8000/api/telemetry"
-MAX_SATELLITES = 50   # To match our hackathon spec
-MAX_DEBRIS = 1000     # To keep the frontend rendering smoothly for this specific test
+API_ENDPOINT = "http://localhost:8000/api/telemetry"
+STEP_ENDPOINT = "http://localhost:8000/api/simulate/step"
 
-print("Initializing CelesTrak Feeder...")
+# THE FLIP: 50 Satellites, 12,000+ Debris
+MAX_SATELLITES = 50
+MAX_DEBRIS = 12000
+
+print("Initializing CelesTrak Stress-Test Feeder...")
 
 # 1. Load the Skyfield timescale and current time
 ts = load.timescale()
@@ -19,31 +22,28 @@ t = ts.from_datetime(now_dt)
 print("Checking for Starlink TLEs (will download if missing)...")
 starlinks = load.tle_file(
     'https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?FILE=starlink&FORMAT=tle',
-    filename='starlink_tles.txt',
-    reload=False # # <--- This tells Skyfield to use the local file if it exists
+    filename='starlink_tles.txt', 
+    reload=False
 )
 
-print("Checking for Cosmos-2251 (Debris) TLEs (will download if missing)...")
+print("Checking for Cosmos-2251 TLEs (will download if missing)...")
 debris_cloud = load.tle_file(
     'https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-2251-debris&FORMAT=tle',
     filename='cosmos_2251_tles.txt',
     reload=False
 )
 
-print(f"Loaded {len(starlinks)} Starlinks and {len(debris_cloud)} Debris objects.")
+print(f"Loaded {len(starlinks)} Starlinks and {len(debris_cloud)} Cosmos fragments.")
+print("Crunching orbital math for 10,000+ objects... (This might take Python 5-10 seconds!)")
 
-# 3. Process into the JSON Payload expected by the Rust Backend
 objects_payload = []
 
-# Process Satellites
-for sat in starlinks[:MAX_SATELLITES]:
-    # Compute the ECI position and velocity for 'now'
+# 3. Process Cosmos-2251 fragments as our SATELLITES (Cap at 50)
+for sat in debris_cloud[:MAX_SATELLITES]:
     geocentric = sat.at(t)
-    # Skyfield returns AU and AU/day, convert to km and km/s
     pos_km = geocentric.position.km
     vel_kms = geocentric.velocity.km_per_s
     
-    # Format the ID to match your API parser (e.g., SAT-Alpha-01)
     norad_id = sat.model.satnum
     formatted_id = f"SAT-Alpha-{norad_id}"
 
@@ -54,8 +54,8 @@ for sat in starlinks[:MAX_SATELLITES]:
         "v": {"x": vel_kms[0], "y": vel_kms[1], "z": vel_kms[2]}
     })
 
-# Process Debris
-for deb in debris_cloud[:MAX_DEBRIS]:
+# 4. Process Starlinks as our DEBRIS CLOUD (Take all of them!)
+for deb in starlinks[:MAX_DEBRIS]:
     geocentric = deb.at(t)
     pos_km = geocentric.position.km
     vel_kms = geocentric.velocity.km_per_s
@@ -70,24 +70,32 @@ for deb in debris_cloud[:MAX_DEBRIS]:
         "v": {"x": vel_kms[0], "y": vel_kms[1], "z": vel_kms[2]}
     })
 
-# 4. Construct the Final JSON
+# 5. Construct the Final JSON
 payload = {
-    # Generate ISO 8601 string for the Rust parser
     "timestamp": now_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
     "objects": objects_payload
 }
 
-# 5. Fire it at the Rust Backend!
-print(f"Injecting {len(objects_payload)} total objects into the physics engine...")
+# 6. Fire it at the Rust Backend!
+print(f"Injecting {len(objects_payload)} total objects into the Rust physics engine...")
 
 try:
+    # Send Telemetry
     response = requests.post(API_ENDPOINT, json=payload)
     if response.status_code == 200:
-        res_data = response.json()
-        print("SUCCESS! Backend Response:")
-        print(f"  Processed: {res_data.get('processed_count')}")
-        print(f"  Active CDM Warnings: {res_data.get('active_cdm_warnings')}")
+        print("Telemetry Ingested Successfully!")
+        
+        # 7. Auto-Trigger the Spatial Hash Grid!
+        print("Fast-forwarding simulation by 60 seconds to trigger Conjunction Assessment...")
+        step_payload = {"step_seconds": 60}
+        step_res = requests.post(STEP_ENDPOINT, json=step_payload)
+        
+        if step_res.status_code == 200:
+            print(f"Grid Search Complete! Check your Rust terminal for the benchmark logs.")
+        else:
+            print(f"Step Failed: {step_res.status_code} - {step_res.text}")
+
     else:
-        print(f"Failed with status {response.status_code}: {response.text}")
+        print(f"Ingestion Failed with status {response.status_code}: {response.text}")
 except Exception as e:
-    print(f"Connection Error: Ensure your Rust server is running on {API_ENDPOINT}")
+    print(f"Connection Error: Ensure your Rust server is running. Error: {e}")
