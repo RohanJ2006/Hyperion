@@ -498,6 +498,9 @@ pub fn hybrid_conjunction_screening(
     horizon_s: f64,
 ) -> Vec<ConjunctionEvent> {
 
+    // Let's start timewatch here
+    let start_time = std::time::Instant::now();
+
     let n = objects.len();
     if n < 2 {
         return Vec::new();
@@ -621,7 +624,8 @@ pub fn hybrid_conjunction_screening(
     // converges in O(log²(range/tol)) iterations.
 
     if filtered.is_empty() {
-        eprintln!("[conjunction] no pairs survived filters — no conjunctions");
+        let elapsed = start_time.elapsed();
+        eprintln!("[conjunction] no pairs survived filters — no conjunctions. Finished in {:.2?}", elapsed);
         return Vec::new();
     }
 
@@ -689,10 +693,14 @@ pub fn hybrid_conjunction_screening(
     // Sort by PCA ascending (closest first)
     events.sort_by(|a, b| a.pca_km.partial_cmp(&b.pca_km).unwrap());
 
+    // Stop the stopwatch
+    let elapsed = start_time.elapsed();
+
     eprintln!(
-        "[conjunction] screening complete: {} conjunction events (PCA ≤ {:.1} km)",
+        "[conjunction] screening complete: {} conjunction events (PCA ≤ {:.1} km) in {:.2?}",
         events.len(),
-        threshold * 50.0
+        threshold * 50.0,
+        elapsed
     );
 
     events
