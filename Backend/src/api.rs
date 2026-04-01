@@ -176,11 +176,6 @@ pub async fn simulate_step(
         );
     }
 
-    // 4. Station-keeping audit
-    let out_of_box = app.engine.check_station_keeping();
-    if !out_of_box.is_empty() {
-    }
-
     app.current_time_unix = end_time;
 
     let new_time_iso = DateTime::<Utc>::from_timestamp(end_time as i64, 0)
@@ -528,7 +523,6 @@ fn evaluate_autonomous_evasion(app: &mut AppState) {
                         let (_, pca_pro) = crate::conjunction::brent_tca_multi(&sat_pro, &deb_snap, PREDICTION_WINDOW as f64);
                         let (_, pca_ret) = crate::conjunction::brent_tca_multi(&sat_ret, &deb_snap, PREDICTION_WINDOW as f64);
 
-                        // 5. Select the maneuver that yields the safest distance
                         let (best_dv_x, best_dv_y, best_dv_z, final_pca, burn_type) = if pca_pro >= pca_ret {
                             (dv_x_pro, dv_y_pro, dv_z_pro, pca_pro, "PROGRADE")
                         } else {
@@ -537,24 +531,42 @@ fn evaluate_autonomous_evasion(app: &mut AppState) {
 
                         println!("[SYSTEM] Selected {} burn. Improved miss distance to {:.3} km.", burn_type, final_pca);
 
-                        // Schedule the optimal burn 15 seconds from current time
-                        let burn_time = app.current_time_unix + 15.0;
+                        // 1. Schedule the Evasion Burn (15 seconds from now)
+                        let evasion_time = app.current_time_unix + 15.0;
 
                         emergency_burns.push(ScheduleManeuver {
                             satellite_id: numeric_id,
-                            burn_time_unix: burn_time,
+                            burn_time_unix: evasion_time,
                             dv_x: best_dv_x,
                             dv_y: best_dv_y,
                             dv_z: best_dv_z,
                         });
                         
+                        // 2. Schedule the Station-Keeping Recovery Burn
+                        // We must wait until the debris has safely passed. 
+                        // event.tca_offset_s gives us the exact seconds until closest approach.
+                        // We add a 3600-second (1 hour) safety buffer before initiating recovery.
+                        let recovery_time = app.current_time_unix + event.tca_offset_s + 3600.0;
+
+                        println!("[SYSTEM] Station-keeping recovery burn scheduled for T+{:.0} seconds.", 
+                                 event.tca_offset_s + 3600.0);
+
+                        emergency_burns.push(ScheduleManeuver {
+                            satellite_id: numeric_id,
+                            burn_time_unix: recovery_time,
+                            // Exactly invert the thrust vector to nullify the velocity debt
+                            dv_x: -best_dv_x,
+                            dv_y: -best_dv_y,
+                            dv_z: -best_dv_z,
+                        });
+                        
                         app.debris_avoided += 1;
                     }
-                }                
+                }
             }
         }
     }
-
+    
     if !emergency_burns.is_empty() {
         app.engine.maneuver_queue.extend(emergency_burns);
     }
