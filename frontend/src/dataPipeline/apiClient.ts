@@ -97,22 +97,7 @@ export async function fetchSnapshot(): Promise<visualSnapshot> {
 
 // ─── ANALYTICS FETCH ──────────────────────────────────────────────────────────
 export async function fetchAnalytics(): Promise<AnalyticsSnapshot> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-  try {
-    // Note: If you didn't add the analytics route to Rust to stay compliant 
-    // with the PDF, this will instantly fail with a 404 and trigger the fallback.
-    const res = await fetch(`${BASE_API}/analytics`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } catch (error) {
-    clearTimeout(timeoutId);
-    console.warn('Analytics API offline or timed out (3s). Using fallback analytics.');
     return generateFallbackAnalytics();
-  }
 }
 
 // ─── FALLBACK SNAPSHOT ────────────────────────────────────────────────────────

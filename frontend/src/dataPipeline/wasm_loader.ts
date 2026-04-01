@@ -29,7 +29,7 @@ export async function initWasmCore(): Promise<WasmCore> {
     bufferLength
   )
 
-  const stride = 6;
+  const stride = 7;
 
   return {
     sharedMemory,

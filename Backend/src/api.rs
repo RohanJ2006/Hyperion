@@ -5,6 +5,9 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use std::time::Duration;
+use tokio::time::sleep;
 use chrono::{DateTime, Utc};
 use simd_json::from_slice;
 
@@ -335,4 +338,72 @@ pub async fn schedule_maneuver(
             projected_mass_remaining_kg: current_mass,
         },
     }))
+}
+
+// WEBSOCKET UPGRADE HANDLER
+pub async fn ws_telemetry_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<SharedState>,
+) -> impl IntoResponse {
+    // Upgrades the HTTP GET request to a persistent WebSocket connection
+    ws.on_upgrade(|socket| handle_socket(socket, state))
+}
+
+// THE BINARY STREAMING LOOP
+async fn handle_socket(mut socket: WebSocket, state: SharedState) {
+    loop {
+        // 1. Lock the state and build the flat Float64 buffer
+        let payload: Vec<f64> = {
+            let app = state.read().await;
+            let engine = &app.engine;
+            let time_unix = app.current_time_unix;
+            
+            // Pre-allocate vector: (Total Objects) * 7 fields per object
+            let mut buffer = Vec::with_capacity(engine.id.len() * 7);
+
+            for i in 0..engine.id.len() {
+                let eci_pos = (engine.x[i], engine.y[i], engine.z[i]);
+                let (lat_rad, lon_rad, alt_km) = eci_to_geodetic(eci_pos, time_unix);
+
+                // Field 1: ID (Numeric part)
+                buffer.push(engine.id[i] as f64);
+                
+                // Field 2: Latitude in degrees
+                buffer.push(lat_rad.to_degrees());
+                
+                // Field 3: Longitude in degrees
+                buffer.push(lon_rad.to_degrees());
+                
+                // Field 4: Altitude in km
+                buffer.push(alt_km);
+                
+                // Field 5: X (Placeholder for WASM Canvas math)
+                buffer.push(0.0);
+                
+                // Field 6: Y (Placeholder for WASM Canvas math)
+                buffer.push(0.0);
+                
+                // Field 7: Type (1.0 for SATELLITE, 0.0 for DEBRIS)
+                buffer.push(if engine.is_satellite[i] { 1.0 } else { 0.0 });
+            }
+            
+            buffer
+        };
+
+        // 2. Convert the Vec<f64> into raw bytes (Vec<u8>) for transmission
+        // JavaScript Float64Arrays natively use Little-Endian byte order on modern hardware
+        let mut byte_buffer = Vec::with_capacity(payload.len() * 8);
+        for val in payload {
+            byte_buffer.extend_from_slice(&val.to_le_bytes());
+        }
+
+        // 3. Blast the binary message to the frontend
+        if socket.send(Message::Binary(byte_buffer)).await.is_err() {
+            println!("Client disconnected from telemetry stream.");
+            break; // Exit the loop if the frontend closes the connection
+        }
+
+        // Stream at 10 Hz (100ms sleep). You can lower this to 33ms for 30 FPS!
+        sleep(Duration::from_millis(100)).await;
+    }
 }

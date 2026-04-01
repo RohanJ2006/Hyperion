@@ -62,6 +62,7 @@ async fn main() {
         .route("/api/maneuver/schedule",        post(schedule_maneuver))
         .route("/api/simulate/step",            post(simulate_step))
         .route("/api/visualization/snapshot",  get(get_snapshot))
+        .route("/ws/telemetry", get(ws_telemetry_handler))
         .fallback_service(ServeDir::new("../frontend/dist"))
         .layer(cors)
         .with_state(shared_state);
