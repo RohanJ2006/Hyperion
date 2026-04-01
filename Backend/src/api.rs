@@ -113,6 +113,35 @@ pub async fn simulate_step(
 ) -> (StatusCode, Json<StepResponse>) {
     let mut app = state.write().await;
 
+    // 1. Process the Store-and-Forward Uplink Queue
+    let mut ready_to_uplink = Vec::new();
+    let current_time = app.current_time_unix;
+
+    // Temporarily take ownership of the queue to separate the memory borrows
+    let mut pending_queue = std::mem::take(&mut app.uplink_queue);
+
+    pending_queue.retain(|burn| {
+        // Now we can safely read from app because pending_queue is completely detached
+        if let Some(&index) = app.id_to_index.get(&burn.satellite_id) {
+            let pos_eci = (app.engine.x[index], app.engine.y[index], app.engine.z[index]);
+            
+            if check_los(pos_eci, current_time) {
+                println!("[UPLINK] Comm link restored for Sat {}. Transmitting stored maneuver.", burn.satellite_id);
+                // We can use *burn because we added the Copy trait!
+                ready_to_uplink.push(*burn); 
+                return false; // Remove from the pending queue
+            }
+        }
+        true // Keep in the pending queue if still in blackout
+    });
+
+    // Reattach the remaining items back to the application state
+    app.uplink_queue = pending_queue;
+
+    if !ready_to_uplink.is_empty() {
+        app.engine.maneuver_queue.extend(ready_to_uplink);
+    }
+
     let start_time = app.current_time_unix;
     let end_time = start_time + payload.step_seconds;
 
@@ -249,6 +278,10 @@ pub async fn schedule_maneuver(
     let gmst = calculate_gmst(app.current_time_unix);
     let sat_ecef = eci_to_ecef(sat_eci, gmst);
 
+    // For LOS purpose
+    let has_los = check_los(sat_eci, app.current_time_unix);
+    let is_blackout = !has_los;
+
     let mut has_los = false;
     for &(gs_lat_deg, gs_lon_deg, gs_alt_m, gs_min_elev) in GROUND_STATIONS {
         let gs_lat_rad = gs_lat_deg.to_radians();
@@ -333,16 +366,27 @@ pub async fn schedule_maneuver(
     }
 
     // All burns validated — commit to the queue
-    app.engine.maneuver_queue.extend(new_maneuvers);
-
-    (StatusCode::ACCEPTED, Json(ManeuverResponse {
-        status: "SCHEDULED".to_string(),
-        validation: ManeuverValidation {
-            ground_station_los: has_los,
-            sufficient_fuel: true,
-            projected_mass_remaining_kg: current_mass,
-        },
-    }))
+    if is_blackout {
+        app.uplink_queue.extend(new_maneuvers);
+        return (StatusCode::ACCEPTED, Json(ManeuverResponse {
+            status: "QUEUED_FOR_UPLINK".to_string(),
+            validation: ManeuverValidation { 
+                ground_station_los: false, 
+                sufficient_fuel: true, 
+                projected_mass_remaining_kg: current_mass 
+            },
+        }));
+    } else {
+        app.engine.maneuver_queue.extend(new_maneuvers);
+        return (StatusCode::ACCEPTED, Json(ManeuverResponse {
+            status: "SCHEDULED".to_string(),
+            validation: ManeuverValidation { 
+                ground_station_los: true, 
+                sufficient_fuel: true, 
+                projected_mass_remaining_kg: current_mass 
+            },
+        }));
+    }
 }
 
 // WEBSOCKET UPGRADE HANDLER
@@ -514,4 +558,21 @@ fn evaluate_autonomous_evasion(app: &mut AppState) {
     if !emergency_burns.is_empty() {
         app.engine.maneuver_queue.extend(emergency_burns);
     }
+}
+
+fn check_los(pos_eci: (f64, f64, f64), time_unix: f64) -> bool {
+    let gmst = calculate_gmst(time_unix);
+    let sat_ecef = eci_to_ecef(pos_eci, gmst);
+
+    for &(gs_lat_deg, gs_lon_deg, gs_alt_m, gs_min_elev) in GROUND_STATIONS {
+        let gs_lat_rad = gs_lat_deg.to_radians();
+        let gs_lon_rad = gs_lon_deg.to_radians();
+        let gs_ecef = geodetic_to_ecef(gs_lat_rad, gs_lon_rad, gs_alt_m / 1000.0);
+        let elevation = calculate_elevation_angle(sat_ecef, gs_lat_rad, gs_lon_rad, gs_ecef);
+        
+        if elevation >= gs_min_elev {
+            return true;
+        }
+    }
+    false
 }

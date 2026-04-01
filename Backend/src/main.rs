@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::api::*;
-use crate::physics::SimState;
+use crate::physics::{SimState, ScheduleManeuver};
 use crate::conjunction::{ConjunctionEvent};
 use crate::constants::API_PORT;
 
@@ -32,6 +32,7 @@ pub struct AppState {
     pub active_conjunctions: Vec<ConjunctionEvent>,
     pub debris_avoided: usize,
     pub last_screening_time: f64, // Track the simulation time of the last scan
+    pub uplink_queue: Vec<ScheduleManeuver>,
 }
 
 pub type SharedState = Arc<RwLock<AppState>>;
@@ -53,6 +54,7 @@ async fn main() {
         active_conjunctions: Vec::new(),
         debris_avoided: 0,
         last_screening_time: 0.0,
+        uplink_queue: Vec::new(),
     };
 
     let shared_state: SharedState = Arc::new(RwLock::new(state));

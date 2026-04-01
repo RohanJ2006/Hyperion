@@ -16,7 +16,7 @@ pub fn parse_api_id(string_id: &str) -> (u32, bool) {
     (numeric_id, is_satellite)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ScheduleManeuver {
     pub satellite_id: u32,
     pub burn_time_unix: f64,
