@@ -71,43 +71,48 @@ export interface EfficiencyPoint {
 }
  
 export const efficiencyHistory: EfficiencyPoint[] = [];
- 
-// const BASE_API = 'api/visualization';
 
-const isDev = import.meta.env.DEV;
-const BASE_URL = isDev ? 'http://localhost:8000' : '';
-const BASE_API = `${BASE_URL}/api/visualization`;
+// const BASE_URL = 'http://0.0.0.0:8000';
+// const BASE_API = `${BASE_URL}/api/visualization`;
+const BASE_API = '/api/visualization';
  
 // ─── SNAPSHOT FETCH ───────────────────────────────────────────────────────────
 export async function fetchSnapshot(): Promise<visualSnapshot> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3000); // 3000ms limit
+
   try {
-    const res = await fetch(`${BASE_API}/snapshot`);
+    const res = await fetch(`${BASE_API}/snapshot`, { signal: controller.signal });
+    clearTimeout(timeoutId); // Clear the timeout if we get a fast response
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data: visualSnapshot = await res.json();
     accountFuelDelta(data.satellites);
     return data;
   } catch (error) {
-    console.log('Backend offline, using fallback snapshot.', error);
+    clearTimeout(timeoutId);
+    console.warn('Backend offline or timed out (3s). Using fallback snapshot.');
     return fallbackSnapshot();
   }
 }
- 
-// ─── ANALYTICS FETCH ──────────────────────────────────────────────────────────
-// export async function fetchAnalytics(): Promise<AnalyticsSnapshot> {
-//   try {
-//     const res = await fetch('/api/visualization/analytics');
-//     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-//     return await res.json();
-//   } catch (error) {
-//     console.warn('Analytics API offline, using fallback.');
-//     return generateFallbackAnalytics();
-//   }
-// }
 
+// ─── ANALYTICS FETCH ──────────────────────────────────────────────────────────
 export async function fetchAnalytics(): Promise<AnalyticsSnapshot> {
-  // We CANNOT fetch from the backend because the PDF does not allow an analytics API.
-  // Instead, we use the local generator to feed the UI charts.
-  return generateFallbackAnalytics();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+  try {
+    // Note: If you didn't add the analytics route to Rust to stay compliant 
+    // with the PDF, this will instantly fail with a 404 and trigger the fallback.
+    const res = await fetch(`${BASE_API}/analytics`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    clearTimeout(timeoutId);
+    console.warn('Analytics API offline or timed out (3s). Using fallback analytics.');
+    return generateFallbackAnalytics();
+  }
 }
 
 // ─── FALLBACK SNAPSHOT ────────────────────────────────────────────────────────
@@ -208,4 +213,3 @@ function generateFallbackAnalytics(): AnalyticsSnapshot {
     maneuvers,
   };
 }
- 

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import time
 
 # --- Configuration ---
-API_ENDPOINT = "http://localhost:8000/api/telemetry"
+API_ENDPOINT = "http://0.0.0.0:8000/api/telemetry"
 MAX_SATELLITES = 50   # To match our hackathon spec
 MAX_DEBRIS = 1000     # To keep the frontend rendering smoothly for this specific test
 

@@ -105,30 +105,35 @@ export async function pixiInit(sharedMemory: Float64Array) {
 
   // --- 3. The Texture Atlas (Performance Secret) ---
   // Draw both your purple satellite and a red debris dot on one hidden canvas
+  const SPRITE_SIZE = 40; 
   const atlasCanvas = document.createElement('canvas');
-  atlasCanvas.width = 16;
-  atlasCanvas.height = 8;
+  atlasCanvas.width = SPRITE_SIZE * 2; 
+  atlasCanvas.height = SPRITE_SIZE;
   const ctx = atlasCanvas.getContext('2d')!;
 
-  // Draw Satellite
+  // Draw Satellite (Purple)
   ctx.fillStyle = '#2016ed';
-  ctx.beginPath(); ctx.arc(4, 4, 4, 0, Math.PI * 4); ctx.fill();
+  ctx.beginPath(); 
+  ctx.arc(20, 20, 20, 0, Math.PI * 2);
+  ctx.fill();
 
-  // Draw Debris
+  // Draw Debris (Red)
   ctx.fillStyle = '#ff4444cc';
-  ctx.beginPath(); ctx.arc(12, 4, 2, 0, Math.PI * 4); ctx.fill();
+  ctx.beginPath(); 
+  ctx.arc(60, 20, 10, 0, Math.PI * 2);
+  ctx.fill();
 
   const atlasTexture = Texture.from(atlasCanvas);
 
-const satTexture = new Texture({
-  source: atlasTexture.source,
-  frame: new Rectangle(0, 0, 8, 8),
-});
+  const satTexture = new Texture({
+    source: atlasTexture.source,
+    frame: new Rectangle(0, 0, 40, 40),
+  });
 
-const debrisTexture = new Texture({
-  source: atlasTexture.source,
-  frame: new Rectangle(8, 0, 8, 8),
-});
+  const debrisTexture = new Texture({
+    source: atlasTexture.source,
+    frame: new Rectangle(40, 0, 40, 40),
+  });
 
   // --- 4. Pre-allocate Sprites ---
   const sprites: Sprite[] = new Array(MAX_ENTITIES);
