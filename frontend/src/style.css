@@ -191,11 +191,11 @@ header {
   max-width: 160px;
 }
 .sat-dropdown:focus {
-  border-color: #38bdf8;
+  border-color: #4e4e4e;
   color: #94a3b8;
 }
 .sat-dropdown option {
-  background: #1e293b;
+  background: #1a1a1a;
 }
  
 /* Heatmap layout: fuel list left + efficiency chart right */
@@ -329,17 +329,3 @@ canvas {
 #main-container.isFocused #Heatmaps:not(.isMaximized) {
   grid-column: span 2 !important; 
 }
-
-/* #main-container.isFocused #Ground-Track:not(.isMaximized) {
-  aspect-ratio: auto !important;
-  width: auto !important;
-}
-
-#main-container.isFocused #Ground-Track.isMaximized {
-  width: auto !important;
-  height: 100% !important;
-  max-width: 100% !important;
-  aspect-ratio: 1 / 1 !important;
-  justify-self: center !important; /* Centers the square beautifully in the left zone
-} 
-*/  
