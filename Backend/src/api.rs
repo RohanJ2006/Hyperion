@@ -86,9 +86,11 @@ pub async fn ingest_telemetry(
                 }
             }
 
-            let active_warnings = app.active_conjunctions.len();
-
+            // Run the evasion first to process the new telemetry
             evaluate_autonomous_evasion(&mut app);
+
+            // now reading the length, so it captures the fresh state
+            let active_warnings = app.active_conjunctions.len();            
 
             let response = TelemetryResponse {
                 status: "ACK".to_string(),
@@ -514,8 +516,6 @@ fn evaluate_autonomous_evasion(app: &mut AppState) {
 
                         println!("[SYSTEM] Selected {} burn. Improved miss distance to {:.3} km. New TCA: {:.0}s.", 
                                  burn_type, final_pca, post_burn_tca);                        
-
-                        println!("[SYSTEM] Selected {} burn. Improved miss distance to {:.3} km.", burn_type, final_pca);
 
                         // 1. Schedule the Evasion Burn (15 seconds from now)
                         let evasion_time = app.current_time_unix + 15.0;
