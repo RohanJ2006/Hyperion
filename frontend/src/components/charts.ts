@@ -38,165 +38,151 @@ let selectedSatelliteId: string | null = null;
 // Earth radius in km (WGS-84 mean)
 const RE_KM = 6371.0;
 
-// Default satellite operating altitude when not provided by snapshot (km above surface).
-// The PS sets initial wet mass for LEO; 550 km is a representative mid-LEO value.
-const DEFAULT_SAT_ALT_KM = 550.0;
-
-// Chart axis half-range in km. Rings at 100 km, 200 km, 400 km map cleanly within ±500.
-const BULLSEYE_RANGE_KM = 500;
+// Maximum proximity radius shown on the bullseye (km). Debris beyond this is ignored.
+const BULLSEYE_RANGE_KM = 10;
 
 /**
- * Convert geodetic (lat°, lon°, alt_km above surface) → ECEF Cartesian (km).
+ * Haversine great-circle distance between two geodetic points (surface-projected, km).
+ * We use surface distance only — the snapshot lat/lon gives the sub-satellite point
+ * and the chart is a 2-D proximity view, not a 3-D conjunction plot.
  */
-function toECEF(latDeg: number, lonDeg: number, altKm: number): [number, number, number] {
-  const lat = latDeg * (Math.PI / 180);
-  const lon = lonDeg * (Math.PI / 180);
-  const r = RE_KM + altKm;
-  return [
-    r * Math.cos(lat) * Math.cos(lon),
-    r * Math.cos(lat) * Math.sin(lon),
-    r * Math.sin(lat),
-  ];
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (d: number) => d * (Math.PI / 180);
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return RE_KM * 2 * Math.asin(Math.sqrt(a));
 }
 
 /**
- * Compute the RTN (Radial-Transverse-Normal) unit vectors for a satellite.
- * R = position unit vector, T = along-track (prograde) approximation, N = R × T.
- * Since the snapshot has no velocity, we approximate T from the sat's instantaneous
- * orbital plane: T is perpendicular to R in the equatorial plane, then rotated by inclination.
- * For a display-only bullseye this is accurate enough to show correct approach sectors.
+ * Initial bearing (°, 0 = North, clockwise) from point 1 → point 2.
+ * Used to place debris at the correct angular position on the polar bullseye.
  */
-function getRTNBasis(
-  satECEF: [number, number, number]
-): { R: [number,number,number]; T: [number,number,number]; N: [number,number,number] } {
-  const [rx, ry, rz] = satECEF;
-  const rMag = Math.sqrt(rx*rx + ry*ry + rz*rz);
-
-  // Radial: outward from Earth centre
-  const R: [number,number,number] = [rx/rMag, ry/rMag, rz/rMag];
-
-  // Normal: cross(R, Z_hat) then normalise — gives the ascending-node direction
-  // (approximation; exact N needs the velocity vector)
-  const Zx = 0, Zy = 0, Zz = 1;
-  let Nx = R[1]*Zz - R[2]*Zy;
-  let Ny = R[2]*Zx - R[0]*Zz;
-  let Nz = R[0]*Zy - R[1]*Zx;
-  const nMag = Math.sqrt(Nx*Nx + Ny*Ny + Nz*Nz) || 1;
-  const N: [number,number,number] = [Nx/nMag, Ny/nMag, Nz/nMag];
-
-  // Transverse: T = N × R  (right-hand prograde direction)
-  const T: [number,number,number] = [
-    N[1]*R[2] - N[2]*R[1],
-    N[2]*R[0] - N[0]*R[2],
-    N[0]*R[1] - N[1]*R[0],
-  ];
-
-  return { R, T, N };
+function bearingDeg(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (d: number) => d * (Math.PI / 180);
+  const dLon  = toRad(lon2 - lon1);
+  const phi1  = toRad(lat1);
+  const phi2  = toRad(lat2);
+  const y = Math.sin(dLon) * Math.cos(phi2);
+  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLon);
+  return ((Math.atan2(y, x) * (180 / Math.PI)) + 360) % 360;
 }
 
 /**
- * Project a debris ECEF vector onto the satellite's RTN frame.
- * Returns the (transverse, normal) components in km — these become the (x, y)
- * coordinates on the bullseye, so:
- *   • x (Transverse) = along-track separation → left/right on chart
- *   • y (Normal)     = cross-track separation → up/down on chart
- * The radial component is NOT plotted (it maps to altitude difference, not a
- * conjunction approach vector in the 2D chart plane).
+ * Convert polar (distKm, bearingDeg) → Cartesian (x, y) for the scatter chart.
+ * Bearing 0° = North = up on chart (+Y), 90° = East = right (+X).
+ *   x =  distKm * sin(bearing)
+ *   y =  distKm * cos(bearing)
  */
-function projectToRTN(
-  debrisECEF: [number, number, number],
-  satECEF:   [number, number, number],
-  basis: { R: [number,number,number]; T: [number,number,number]; N: [number,number,number] }
-): { distKm: number; x: number; y: number } {
-  const dx = debrisECEF[0] - satECEF[0];
-  const dy = debrisECEF[1] - satECEF[1];
-  const dz = debrisECEF[2] - satECEF[2];
-
-  const distKm = Math.sqrt(dx*dx + dy*dy + dz*dz);
-
-  // Project relative vector onto T and N axes
-  const tComp = dx*basis.T[0] + dy*basis.T[1] + dz*basis.T[2]; // along-track km
-  const nComp = dx*basis.N[0] + dy*basis.N[1] + dz*basis.N[2]; // cross-track km
-
-  return { distKm, x: tComp, y: nComp };
+function polarToCartesian(distKm: number, bearDeg: number): { x: number; y: number } {
+  const rad = bearDeg * (Math.PI / 180);
+  return { x: distKm * Math.sin(rad), y: distKm * Math.cos(rad) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BULLSEYE RINGS PLUGIN
-// Rings now labelled in true km miss-distance, matching the plotted coordinate space.
+// BULLSEYE POLAR PLUGIN
+// Renders: 3 dashed rings (1 km / 5 km / 10 km), 8 sector dividers at 45° steps,
+// degree labels at each sector, ring distance labels, and the centre satellite dot.
+// Coordinate space: x = East component (km), y = North component (km), origin = sat.
 // ─────────────────────────────────────────────────────────────────────────────
 const bullseyeRingsPlugin: Plugin = {
   id: 'bullseyeRings',
   afterDraw(chart) {
     const { ctx, chartArea, scales } = chart;
     if (!chartArea) return;
- 
+
     const xScale = scales['x'];
     const yScale = scales['y'];
     const originX = xScale.getPixelForValue(0);
     const originY = yScale.getPixelForValue(0);
-    // px per 1 km (axis is now in km, range ±BULLSEYE_RANGE_KM)
+    // px per 1 km — derived from the x-axis mapping
     const pxPerKm = Math.abs(xScale.getPixelForValue(1) - xScale.getPixelForValue(0));
- 
-    // Rings at the PS-defined thresholds: critical < 0.1 km, warning < 5 km, safe outer = 100 km
-    // We show 3 rings scaled to the chart range so they're always visible.
+
     const rings = [
-      { radiusKm: 1,   color: THEME.critical, label: '1 km — CRITICAL' },
-      { radiusKm: 50,  color: THEME.warning,  label: '50 km — WARNING'  },
-      { radiusKm: 200, color: '#2d4a6b',      label: '200 km'           },
+      { radiusKm: 1,  color: THEME.critical, label: '1km'  },
+      { radiusKm: 5,  color: THEME.warning,  label: '5km'  },
+      { radiusKm: 10, color: '#2d4a6b',      label: '10km' },
     ];
- 
+
     ctx.save();
+    // Clip to chart area so nothing bleeds outside the panel
     ctx.beginPath();
     ctx.rect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, chartArea.bottom - chartArea.top);
     ctx.clip();
- 
+
+    // ── Sector divider lines (every 45°, 8 lines) ───────────────────────────
+    const outerRadiusPx = pxPerKm * BULLSEYE_RANGE_KM;
+    ctx.save();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.8;
+    for (let angleDeg = 0; angleDeg < 360; angleDeg += 45) {
+      const rad = (angleDeg - 90) * (Math.PI / 180); // -90 so 0° = North = up
+      ctx.beginPath();
+      ctx.moveTo(originX, originY);
+      ctx.lineTo(originX + outerRadiusPx * Math.cos(rad), originY + outerRadiusPx * Math.sin(rad));
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // ── Degree labels at each sector boundary (on the outermost ring) ────────
+    ctx.save();
+    ctx.font = "9px 'IBM Plex Mono', monospace";
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = '#64748b';
+    const labelRadiusPx = pxPerKm * (BULLSEYE_RANGE_KM * 0.82); // slightly inside outer ring
+    [0, 45, 90, 135, 180, 225, 270, 315].forEach((angleDeg) => {
+      const rad = (angleDeg - 90) * (Math.PI / 180);
+      const lx = originX + labelRadiusPx * Math.cos(rad);
+      const ly = originY + labelRadiusPx * Math.sin(rad);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${angleDeg}`, lx, ly);
+    });
+    ctx.restore();
+
+    // ── Dashed range rings ───────────────────────────────────────────────────
     rings.forEach(({ radiusKm, color, label }) => {
       const canvasRadius = pxPerKm * radiusKm;
-      if (canvasRadius < 2) return; // skip if ring would be invisible
- 
+      if (canvasRadius < 2) return;
+
       ctx.beginPath();
       ctx.setLineDash([4, 6]);
       ctx.arc(originX, originY, canvasRadius, 0, Math.PI * 2);
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
-      ctx.globalAlpha = 0.7;
+      ctx.globalAlpha = 0.75;
       ctx.stroke();
- 
+
+      // Ring distance label — placed at the 0° (East / right) intercept
       ctx.setLineDash([]);
       ctx.globalAlpha = 0.9;
       ctx.font = "9px 'IBM Plex Mono', monospace";
       ctx.fillStyle = color;
-      ctx.textAlign = 'center';
-      ctx.fillText(label, originX, originY - canvasRadius + 10);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, originX + canvasRadius + 3, originY);
     });
- 
-    // Crosshair axes
-    ctx.setLineDash([2, 6]);
-    ctx.globalAlpha = 0.25;
-    ctx.strokeStyle = '#475569';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(chartArea.left, originY);
-    ctx.lineTo(chartArea.right, originY);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(originX, chartArea.top);
-    ctx.lineTo(originX, chartArea.bottom);
-    ctx.stroke();
 
-    // Axis direction labels
+    // ── Cardinal direction labels ─────────────────────────────────────────────
     ctx.setLineDash([]);
-    ctx.globalAlpha = 0.5;
+    ctx.globalAlpha = 0.35;
     ctx.font = "8px 'IBM Plex Mono', monospace";
     ctx.fillStyle = '#475569';
     ctx.textAlign = 'center';
-    ctx.fillText('PROGRADE ▶', chartArea.right - 36, originY - 6);
-    ctx.fillText('◀ RETROGRADE', chartArea.left + 40, originY - 6);
+    ctx.textBaseline = 'middle';
+    const cardinalR = pxPerKm * BULLSEYE_RANGE_KM * 1.04;
+    ctx.fillText('N', originX, originY - cardinalR);
+    ctx.fillText('S', originX, originY + cardinalR);
     ctx.textAlign = 'left';
-    ctx.fillText('▲ OUT-OF-PLANE', originX + 6, chartArea.top + 14);
- 
-    // Center satellite dot
+    ctx.fillText('E', originX + cardinalR, originY);
+    ctx.textAlign = 'right';
+    ctx.fillText('W', originX - cardinalR, originY);
+
+    // ── Centre satellite dot ─────────────────────────────────────────────────
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
     ctx.beginPath();
@@ -208,11 +194,11 @@ const bullseyeRingsPlugin: Plugin = {
     ctx.strokeStyle = '#60a5fa';
     ctx.lineWidth = 1.5;
     ctx.stroke();
- 
+
     ctx.restore();
   }
 };
- 
+
 Chart.register(bullseyeRingsPlugin);
  
 // ─────────────────────────────────────────────────────────────────────────────
@@ -241,14 +227,14 @@ export function initBullseyeChart(canvasId: string) {
         tooltip: {
           callbacks: {
             label: (item) => {
-              const x = item.parsed.x ?? 0;
-              const y = item.parsed.y ?? 0;
-              const dist = Math.sqrt(x * x + y * y).toFixed(1);
-              const bearing = ((Math.atan2(x, y) * (180 / Math.PI)) + 360) % 360;
+              const x = item.parsed.x ?? 0; // East component (km)
+              const y = item.parsed.y ?? 0; // North component (km)
+              const dist = Math.sqrt(x * x + y * y).toFixed(2);
+              const bear = ((Math.atan2(x, y) * (180 / Math.PI)) + 360) % 360;
               return [
-                `Miss dist: ${dist} km`,
-                `T: ${x.toFixed(1)} km  N: ${y.toFixed(1)} km`,
-                `Approach bearing: ${bearing.toFixed(0)}\u00b0`,
+                `Distance: ${dist} km`,
+                `Bearing: ${bear.toFixed(0)}°`,
+                `E: ${x.toFixed(2)} km  N: ${y.toFixed(2)} km`,
               ];
             }
           }
@@ -256,7 +242,7 @@ export function initBullseyeChart(canvasId: string) {
       },
       scales: {
         x: { min: -BULLSEYE_RANGE_KM, max: BULLSEYE_RANGE_KM, grid: { display: false }, border: { display: false }, ticks: { display: false } },
-        y: { min: -BULLSEYE_RANGE_KM, max: BULLSEYE_RANGE_KM, grid: { display: false }, border: { display: false }, ticks: { display: false } }
+        y: { min: -BULLSEYE_RANGE_KM, max: BULLSEYE_RANGE_KM, grid: { display: false }, border: { display: false }, ticks: { display: false } },
       }
     }
   };
@@ -483,45 +469,35 @@ function updateDashboardCharts(snapshot: visualSnapshot) {
     updateSatelliteDropdown(snapshot.satellites);
     updateFuelList(snapshot.satellites);
   }
- 
+
   if (snapshot.debris_cloud && snapshot.debris_cloud.length > 0) {
     const selectedSat = selectedSatelliteId
       ? snapshot.satellites?.find(s => s.id === selectedSatelliteId)
       : snapshot.satellites?.[0];
- 
+
     const safeData: Point[] = [];
     const warningData: Point[] = [];
     const criticalData: Point[] = [];
 
     if (selectedSat) {
-      // ── TRUE ECEF → RTN PROJECTION ──────────────────────────────────────────
-      // The snapshot gives lat/lon for the satellite but no altitude.
-      // We use DEFAULT_SAT_ALT_KM (550 km) for the sat. Debris alt comes from
-      // debrisTuple[3] which is altitude in km (per the PS API spec).
-      const satECEF = toECEF(selectedSat.lat, selectedSat.lon, DEFAULT_SAT_ALT_KM);
-      const basis   = getRTNBasis(satECEF);
-
       snapshot.debris_cloud.forEach((debris) => {
-        // debrisTuple = [id, lat, lon, alt_km]
-        const debrisAlt  = typeof debris[3] === 'number' ? debris[3] : DEFAULT_SAT_ALT_KM;
-        const debrisECEF = toECEF(debris[1], debris[2], debrisAlt);
+        // debris = [id, lat, lon, alt_km]
+        const distKm = haversineKm(selectedSat.lat, selectedSat.lon, debris[1], debris[2]);
 
-        const { distKm, x, y } = projectToRTN(debrisECEF, satECEF, basis);
+        // Only plot debris within the 10 km proximity zone
+        if (distKm > BULLSEYE_RANGE_KM) return;
 
-        // Clamp to chart range so distant debris still appears near the edge
-        // rather than being discarded — judges can see the chart is populated.
-        const cx = Math.max(-BULLSEYE_RANGE_KM, Math.min(BULLSEYE_RANGE_KM, x));
-        const cy = Math.max(-BULLSEYE_RANGE_KM, Math.min(BULLSEYE_RANGE_KM, y));
+        // Convert to polar → cartesian for scatter chart
+        // x = East component, y = North component (North = up on chart)
+        const bear = bearingDeg(selectedSat.lat, selectedSat.lon, debris[1], debris[2]);
+        const { x, y } = polarToCartesian(distKm, bear);
 
-        // Risk thresholds match the PS: critical < 0.1 km, warning < 50 km
-        // (0.1 km is the PS collision threshold; we widen to 1 km for visual clarity
-        // since the snapshot data is coarser than a real CDM feed).
-        if (distKm < 1.0)  criticalData.push({ x: cx, y: cy });
-        else if (distKm < 50.0) warningData.push({ x: cx, y: cy });
-        else                safeData.push({ x: cx, y: cy });
+        if (distKm < 1.0)       criticalData.push({ x, y });
+        else if (distKm < 5.0)  warningData.push({ x, y });
+        else                    safeData.push({ x, y });
       });
     }
- 
+
     bullseyeChart.data.datasets[0].data = safeData;
     bullseyeChart.data.datasets[1].data = warningData;
     bullseyeChart.data.datasets[2].data = criticalData;

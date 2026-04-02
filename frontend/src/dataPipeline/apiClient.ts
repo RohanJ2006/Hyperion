@@ -98,47 +98,83 @@ export async function fetchSnapshot(): Promise<visualSnapshot> {
 // ─── ANALYTICS FETCH ──────────────────────────────────────────────────────────
 export async function fetchAnalytics(): Promise<AnalyticsSnapshot> {
     return generateFallbackAnalytics();
-}
+} 
 
 // ─── FALLBACK SNAPSHOT ────────────────────────────────────────────────────────
-// Simulates realistic fuel burns: each satellite has a stable fuel level that
-// occasionally drops by a small amount (simulating a burn event).
-// We persist fuel state in _fakeFuelState so values carry over between calls.
+// Fuel and satellite positions are seeded once and stable across polls.
+// A portion of debris is generated close to each satellite so the bullseye
+// chart always has visible dots when the real backend is offline.
 const _fakeFuelState = new Map<string, number>();
+const _fakeSatPos    = new Map<string, { lat: number; lon: number }>();
+
+// 1° of latitude ≈ 111 km. Debris within ±9.5 km maps inside the 10 km ring.
+const KM_PER_DEG            = 111.0;
+const NEAR_DEBRIS_SPREAD_KM = 9.5;
+const NEAR_DEBRIS_SPREAD_DEG = NEAR_DEBRIS_SPREAD_KM / KM_PER_DEG;
 
 function fallbackSnapshot(): visualSnapshot {
   const timestamp = new Date().toISOString();
   const satellites: satelliteInformation[] = [];
- 
+
   for (let i = 0; i <= 50; i++) {
     const id = `SAT-Alpha-${String(i).padStart(2, '0')}`;
- 
-    // Initialise fuel state on first call (50kg max per problem statement)
-    if (!_fakeFuelState.has(id)) {
-      _fakeFuelState.set(id, 40 + Math.random() * 20); // start 30–50 kg
+
+    // Stable position — seeded once, never changes between polls
+    if (!_fakeSatPos.has(id)) {
+      _fakeSatPos.set(id, {
+        lat: (Math.random() - 0.5) * 140,
+        lon: (Math.random() - 0.5) * 360,
+      });
     }
- 
+
+    // Initialise fuel state on first call (50 kg max per problem statement)
+    if (!_fakeFuelState.has(id)) {
+      _fakeFuelState.set(id, 40 + Math.random() * 10);
+    }
+
     let fuel = _fakeFuelState.get(id)!;
- 
+
     // ~15% chance of a small burn (0.1–0.8 kg) each poll cycle
     if (Math.random() < 0.15 && fuel > 2) {
       fuel = Math.max(0, fuel - (0.1 + Math.random() * 0.7));
       _fakeFuelState.set(id, fuel);
     }
+
+    const { lat, lon } = _fakeSatPos.get(id)!;
     satellites.push({
       id,
-      lat: (Math.random() - 0.5) * 140,
-      lon: (Math.random() - 0.5) * 360,
+      lat,
+      lon,
       fuel_kg: parseFloat(fuel.toFixed(2)),
       status: fuel < 5 ? 'CRITICAL' : fuel < 15 ? 'WARNING' : 'NOMINAL',
     });
   }
- 
+
   // After building the snapshot, run fuel accounting so cumulativeFuelConsumed updates
   accountFuelDelta(satellites);
- 
+
   const debris_cloud: debrisTuple[] = [];
-  for (let i = 1; i <= 200; i++) {
+  let debrisIdx = 1;
+
+  // ── Near debris: 4–6 pieces per satellite within the 10 km bullseye zone ──
+  satellites.forEach((sat) => {
+    const nearCount = 4 + Math.floor(Math.random() * 3); // 4–6 per satellite
+    for (let n = 0; n < nearCount; n++) {
+      const dLat = (Math.random() * 2 - 1) * NEAR_DEBRIS_SPREAD_DEG;
+      // Longitude degree size shrinks toward poles
+      const cosLat = Math.cos(sat.lat * (Math.PI / 180)) || 0.01;
+      const dLon   = (Math.random() * 2 - 1) * (NEAR_DEBRIS_SPREAD_DEG / cosLat);
+      debris_cloud.push([
+        `DEB-NEAR-${debrisIdx++}`,
+        sat.lat + dLat,
+        sat.lon + dLon,
+        300 + Math.random() * 500,
+      ]);
+    }
+  });
+
+  // ── Background debris: global scatter (will not appear on the 10 km bullseye) ──
+  for (let i = 0; i < 50; i++) {
     debris_cloud.push([
       `DEB-${10000 + i}`,
       (Math.random() - 0.5) * 140,
@@ -146,7 +182,7 @@ function fallbackSnapshot(): visualSnapshot {
       300 + Math.random() * 500,
     ]);
   }
- 
+
   return { timestamp, satellites, debris_cloud };
 }
  
