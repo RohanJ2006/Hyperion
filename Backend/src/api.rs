@@ -15,7 +15,7 @@ use simd_json::from_slice;
 use crate::models::*;
 use crate::physics::{parse_api_id, ScheduleManeuver};
 use crate::maths::{eci_to_geodetic, eci_to_ecef, calculate_elevation_angle, calculate_fuel_burn, calculate_gmst, geodetic_to_ecef, rtn_to_eci};
-use crate::conjunction::{screen_from_sim_state, ObjectSnapshot};
+use crate::conjunction::{screen_from_sim_state, ObjectSnapshot, brent_tca_multi};
 use crate::constants::*;
 use crate::SharedState;
 
@@ -501,14 +501,19 @@ fn evaluate_autonomous_evasion(app: &mut AppState) {
                         };
 
                         // 4. Run the Trial Ephemeris through the Brent algorithm
-                        let (_, pca_pro) = crate::conjunction::brent_tca_multi(&sat_pro, &deb_snap, PREDICTION_WINDOW as f64);
-                        let (_, pca_ret) = crate::conjunction::brent_tca_multi(&sat_ret, &deb_snap, PREDICTION_WINDOW as f64);
+                        let (tca_pro, pca_pro) = brent_tca_multi(&sat_pro, &deb_snap, PREDICTION_WINDOW as f64);
+                        let (tca_ret, pca_ret) = brent_tca_multi(&sat_ret, &deb_snap, PREDICTION_WINDOW as f64);
 
-                        let (best_dv_x, best_dv_y, best_dv_z, final_pca, burn_type) = if pca_pro >= pca_ret {
-                            (dv_x_pro, dv_y_pro, dv_z_pro, pca_pro, "PROGRADE")
+
+                        // 5. Select the maneuver that yields the safest distance
+                        let (best_dv_x, best_dv_y, best_dv_z, final_pca, post_burn_tca, burn_type) = if pca_pro >= pca_ret {
+                            (dv_x_pro, dv_y_pro, dv_z_pro, pca_pro, tca_pro, "PROGRADE")
                         } else {
-                            (dv_x_ret, dv_y_ret, dv_z_ret, pca_ret, "RETROGRADE")
+                            (dv_x_ret, dv_y_ret, dv_z_ret, pca_ret, tca_ret, "RETROGRADE")
                         };
+
+                        println!("[SYSTEM] Selected {} burn. Improved miss distance to {:.3} km. New TCA: {:.0}s.", 
+                                 burn_type, final_pca, post_burn_tca);                        
 
                         println!("[SYSTEM] Selected {} burn. Improved miss distance to {:.3} km.", burn_type, final_pca);
 
@@ -527,10 +532,10 @@ fn evaluate_autonomous_evasion(app: &mut AppState) {
                         // We must wait until the debris has safely passed. 
                         // event.tca_offset_s gives us the exact seconds until closest approach.
                         // We add a 3600-second (1 hour) safety buffer before initiating recovery.
-                        let recovery_time = app.current_time_unix + event.tca_offset_s + 3600.0;
+                        let recovery_time = app.current_time_unix + post_burn_tca + 3600.0;
 
                         println!("[SYSTEM] Station-keeping recovery burn scheduled for T+{:.0} seconds.", 
-                                 event.tca_offset_s + 3600.0);
+                                 post_burn_tca + 3600.0);
 
                         emergency_burns.push(ScheduleManeuver {
                             satellite_id: numeric_id,
