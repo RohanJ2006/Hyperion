@@ -277,25 +277,6 @@ pub async fn schedule_maneuver(
     let has_los = check_los(sat_eci, app.current_time_unix);
     let is_blackout = !has_los;
 
-    let mut has_los = false;
-    for &(gs_lat_deg, gs_lon_deg, gs_alt_m, gs_min_elev) in GROUND_STATIONS {
-        let gs_lat_rad = gs_lat_deg.to_radians();
-        let gs_lon_rad = gs_lon_deg.to_radians();
-        let gs_ecef = geodetic_to_ecef(gs_lat_rad, gs_lon_rad, gs_alt_m / 1000.0);
-        let elevation = calculate_elevation_angle(sat_ecef, gs_lat_rad, gs_lon_rad, gs_ecef);
-        if elevation >= gs_min_elev {
-            has_los = true;
-            break;
-        }
-    }
-
-    if !has_los {
-        return (StatusCode::BAD_REQUEST, Json(ManeuverResponse {
-            status: "REJECTED: Communications blackout".to_string(),
-            validation: ManeuverValidation { ground_station_los: false, sufficient_fuel: true, projected_mass_remaining_kg: app.engine.mass[index] },
-        }));
-    }
-
     // ---- Validate and queue each burn ----
     let mut current_mass = app.engine.mass[index];
     let mut last_burn = app.engine.last_burn_time[index];
