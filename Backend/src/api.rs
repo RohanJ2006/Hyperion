@@ -1,3 +1,4 @@
+use crate::AppState;
 use axum::{
     extract::State,
     body::Bytes,
@@ -5,13 +6,16 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use std::time::Duration;
+use tokio::time::sleep;
 use chrono::{DateTime, Utc};
 use simd_json::from_slice;
 
 use crate::models::*;
 use crate::physics::{parse_api_id, ScheduleManeuver};
-use crate::maths::{eci_to_geodetic, eci_to_ecef, calculate_elevation_angle, calculate_fuel_burn, calculate_gmst, geodetic_to_ecef};
-use crate::conjunction::screen_from_sim_state;
+use crate::maths::{eci_to_geodetic, eci_to_ecef, calculate_elevation_angle, calculate_fuel_burn, calculate_gmst, geodetic_to_ecef, rtn_to_eci};
+use crate::conjunction::{screen_from_sim_state, ObjectSnapshot};
 use crate::constants::*;
 use crate::SharedState;
 
@@ -84,6 +88,8 @@ pub async fn ingest_telemetry(
 
             let active_warnings = app.active_conjunctions.len();
 
+            evaluate_autonomous_evasion(&mut app);
+
             let response = TelemetryResponse {
                 status: "ACK".to_string(),
                 processed_count: data.objects.len(),
@@ -106,6 +112,35 @@ pub async fn simulate_step(
     Json(payload): Json<StepPayload>,
 ) -> (StatusCode, Json<StepResponse>) {
     let mut app = state.write().await;
+
+    // 1. Process the Store-and-Forward Uplink Queue
+    let mut ready_to_uplink = Vec::new();
+    let current_time = app.current_time_unix;
+
+    // Temporarily take ownership of the queue to separate the memory borrows
+    let mut pending_queue = std::mem::take(&mut app.uplink_queue);
+
+    pending_queue.retain(|burn| {
+        // Now we can safely read from app because pending_queue is completely detached
+        if let Some(&index) = app.id_to_index.get(&burn.satellite_id) {
+            let pos_eci = (app.engine.x[index], app.engine.y[index], app.engine.z[index]);
+            
+            if check_los(pos_eci, current_time) {
+                println!("[UPLINK] Comm link restored for Sat {}. Transmitting stored maneuver.", burn.satellite_id);
+                // We can use *burn because we added the Copy trait!
+                ready_to_uplink.push(*burn); 
+                return false; // Remove from the pending queue
+            }
+        }
+        true // Keep in the pending queue if still in blackout
+    });
+
+    // Reattach the remaining items back to the application state
+    app.uplink_queue = pending_queue;
+
+    if !ready_to_uplink.is_empty() {
+        app.engine.maneuver_queue.extend(ready_to_uplink);
+    }
 
     let start_time = app.current_time_unix;
     let end_time = start_time + payload.step_seconds;
@@ -141,16 +176,13 @@ pub async fn simulate_step(
         );
     }
 
-    // 4. Station-keeping audit
-    let out_of_box = app.engine.check_station_keeping();
-    if !out_of_box.is_empty() {
-    }
-
     app.current_time_unix = end_time;
 
     let new_time_iso = DateTime::<Utc>::from_timestamp(end_time as i64, 0)
         .unwrap_or_default()
         .to_rfc3339();
+
+    evaluate_autonomous_evasion(&mut app);
 
     (StatusCode::OK, Json(StepResponse {
         status: "STEP_COMPLETE".to_string(),
@@ -241,6 +273,10 @@ pub async fn schedule_maneuver(
     let gmst = calculate_gmst(app.current_time_unix);
     let sat_ecef = eci_to_ecef(sat_eci, gmst);
 
+    // For LOS purpose
+    let has_los = check_los(sat_eci, app.current_time_unix);
+    let is_blackout = !has_los;
+
     let mut has_los = false;
     for &(gs_lat_deg, gs_lon_deg, gs_alt_m, gs_min_elev) in GROUND_STATIONS {
         let gs_lat_rad = gs_lat_deg.to_radians();
@@ -325,14 +361,230 @@ pub async fn schedule_maneuver(
     }
 
     // All burns validated — commit to the queue
-    app.engine.maneuver_queue.extend(new_maneuvers);
+    if is_blackout {
+        app.uplink_queue.extend(new_maneuvers);
+        return (StatusCode::ACCEPTED, Json(ManeuverResponse {
+            status: "QUEUED_FOR_UPLINK".to_string(),
+            validation: ManeuverValidation { 
+                ground_station_los: false, 
+                sufficient_fuel: true, 
+                projected_mass_remaining_kg: current_mass 
+            },
+        }));
+    } else {
+        app.engine.maneuver_queue.extend(new_maneuvers);
+        return (StatusCode::ACCEPTED, Json(ManeuverResponse {
+            status: "SCHEDULED".to_string(),
+            validation: ManeuverValidation { 
+                ground_station_los: true, 
+                sufficient_fuel: true, 
+                projected_mass_remaining_kg: current_mass 
+            },
+        }));
+    }
+}
 
-    (StatusCode::ACCEPTED, Json(ManeuverResponse {
-        status: "SCHEDULED".to_string(),
-        validation: ManeuverValidation {
-            ground_station_los: has_los,
-            sufficient_fuel: true,
-            projected_mass_remaining_kg: current_mass,
-        },
-    }))
+// WEBSOCKET UPGRADE HANDLER
+pub async fn ws_telemetry_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<SharedState>,
+) -> impl IntoResponse {
+    // Upgrades the HTTP GET request to a persistent WebSocket connection
+    ws.on_upgrade(|socket| handle_socket(socket, state))
+}
+
+// THE BINARY STREAMING LOOP
+async fn handle_socket(mut socket: WebSocket, state: SharedState) {
+    loop {
+        // 1. Lock the state and build the flat Float64 buffer
+        let payload: Vec<f64> = {
+            let app = state.read().await;
+            let engine = &app.engine;
+            let time_unix = app.current_time_unix;
+            
+            // Pre-allocate vector: (Total Objects) * 7 fields per object
+            let mut buffer = Vec::with_capacity(engine.id.len() * 7);
+
+            for i in 0..engine.id.len() {
+                let eci_pos = (engine.x[i], engine.y[i], engine.z[i]);
+                let (lat_rad, lon_rad, alt_km) = eci_to_geodetic(eci_pos, time_unix);
+
+                // Field 1: ID (Numeric part)
+                buffer.push(engine.id[i] as f64);
+                
+                // Field 2: Latitude in degrees
+                buffer.push(lat_rad.to_degrees());
+                
+                // Field 3: Longitude in degrees
+                buffer.push(lon_rad.to_degrees());
+                
+                // Field 4: Altitude in km
+                buffer.push(alt_km);
+                
+                // Field 5: X (Placeholder for WASM Canvas math)
+                buffer.push(0.0);
+                
+                // Field 6: Y (Placeholder for WASM Canvas math)
+                buffer.push(0.0);
+                
+                // Field 7: Type (1.0 for SATELLITE, 0.0 for DEBRIS)
+                buffer.push(if engine.is_satellite[i] { 1.0 } else { 0.0 });
+            }
+            
+            buffer
+        };
+
+        // 2. Convert the Vec<f64> into raw bytes (Vec<u8>) for transmission
+        // JavaScript Float64Arrays natively use Little-Endian byte order on modern hardware
+        let mut byte_buffer = Vec::with_capacity(payload.len() * 8);
+        for val in payload {
+            byte_buffer.extend_from_slice(&val.to_le_bytes());
+        }
+
+        // 3. Blast the binary message to the frontend
+        if socket.send(Message::Binary(byte_buffer)).await.is_err() {
+            println!("Client disconnected from telemetry stream.");
+            break; // Exit the loop if the frontend closes the connection
+        }
+
+        // Stream at 10 Hz (100ms sleep). You can lower this to 33ms for 30 FPS!
+        sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Evaluates future conjunctions and schedules evasive maneuvers if a critical threshold is breached.
+/// Implements a 15-second simulation-time throttle to prevent CPU starvation during high-frequency telemetry ingestion.
+fn evaluate_autonomous_evasion(app: &mut AppState) {
+    // Throttle: Only run the heavy prediction if 15 simulation seconds have passed
+    if app.current_time_unix - app.last_screening_time < 15.0 {
+        return;
+    }
+
+    let engine = &app.engine;
+    
+    // 1. Run the predictive screening
+    app.active_conjunctions = screen_from_sim_state(
+        &engine.id,
+        &engine.is_satellite,
+        &engine.x, &engine.y, &engine.z,
+        &engine.vx, &engine.vy, &engine.vz,
+        PREDICTION_WINDOW as f64,
+    );
+
+    app.last_screening_time = app.current_time_unix;
+
+    // 2. Process critical threats
+    let mut emergency_burns = Vec::new();
+    
+    for event in &app.active_conjunctions {
+        if event.pca_km <= 0.100 {
+            let sat_already_dodging = emergency_burns.iter().any(|b: &ScheduleManeuver| b.satellite_id == event.satellite_id) || 
+                                      app.engine.maneuver_queue.iter().any(|b| b.satellite_id == event.satellite_id);
+
+            if !sat_already_dodging {
+                let numeric_id = event.satellite_id;
+                if let Some(&index) = app.id_to_index.get(&numeric_id) {
+                    if app.engine.mass[index] > DRY_MASS {
+                        println!("[SYSTEM] Critical trajectory detected: Sat {} vs Deb {}. Initial PCA: {:.3} km.", 
+                                 numeric_id, event.debris_id, event.pca_km);
+                        
+                        let pos_eci = (app.engine.x[index], app.engine.y[index], app.engine.z[index]);
+                        let vel_eci = (app.engine.vx[index], app.engine.vy[index], app.engine.vz[index]);
+
+                        // 1. Calculate both Delta-V vectors in the global ECI frame
+                        let (dv_x_pro, dv_y_pro, dv_z_pro) = crate::maths::rtn_to_eci(pos_eci, vel_eci, (0.0, MAX_THRUST_DELTA, 0.0));
+                        let (dv_x_ret, dv_y_ret, dv_z_ret) = crate::maths::rtn_to_eci(pos_eci, vel_eci, (0.0, -MAX_THRUST_DELTA, 0.0));
+
+                        // 2. Fetch the debris state vectors to test against
+                        let deb_index = app.id_to_index.get(&event.debris_id).expect("Debris missing from index");
+                        let deb_snap = ObjectSnapshot {
+                            id: event.debris_id,
+                            is_satellite: false,
+                            pos: (app.engine.x[*deb_index], app.engine.y[*deb_index], app.engine.z[*deb_index]),
+                            vel: (app.engine.vx[*deb_index], app.engine.vy[*deb_index], app.engine.vz[*deb_index]),
+                        };
+
+                        // 3. Create virtual satellite clones with the proposed Delta-V applied
+                        let sat_pro = ObjectSnapshot {
+                            id: numeric_id,
+                            is_satellite: true,
+                            pos: pos_eci,
+                            vel: (vel_eci.0 + dv_x_pro, vel_eci.1 + dv_y_pro, vel_eci.2 + dv_z_pro),
+                        };
+
+                        let sat_ret = ObjectSnapshot {
+                            id: numeric_id,
+                            is_satellite: true,
+                            pos: pos_eci,
+                            vel: (vel_eci.0 + dv_x_ret, vel_eci.1 + dv_y_ret, vel_eci.2 + dv_z_ret),
+                        };
+
+                        // 4. Run the Trial Ephemeris through the Brent algorithm
+                        let (_, pca_pro) = crate::conjunction::brent_tca_multi(&sat_pro, &deb_snap, PREDICTION_WINDOW as f64);
+                        let (_, pca_ret) = crate::conjunction::brent_tca_multi(&sat_ret, &deb_snap, PREDICTION_WINDOW as f64);
+
+                        let (best_dv_x, best_dv_y, best_dv_z, final_pca, burn_type) = if pca_pro >= pca_ret {
+                            (dv_x_pro, dv_y_pro, dv_z_pro, pca_pro, "PROGRADE")
+                        } else {
+                            (dv_x_ret, dv_y_ret, dv_z_ret, pca_ret, "RETROGRADE")
+                        };
+
+                        println!("[SYSTEM] Selected {} burn. Improved miss distance to {:.3} km.", burn_type, final_pca);
+
+                        // 1. Schedule the Evasion Burn (15 seconds from now)
+                        let evasion_time = app.current_time_unix + 15.0;
+
+                        emergency_burns.push(ScheduleManeuver {
+                            satellite_id: numeric_id,
+                            burn_time_unix: evasion_time,
+                            dv_x: best_dv_x,
+                            dv_y: best_dv_y,
+                            dv_z: best_dv_z,
+                        });
+                        
+                        // 2. Schedule the Station-Keeping Recovery Burn
+                        // We must wait until the debris has safely passed. 
+                        // event.tca_offset_s gives us the exact seconds until closest approach.
+                        // We add a 3600-second (1 hour) safety buffer before initiating recovery.
+                        let recovery_time = app.current_time_unix + event.tca_offset_s + 3600.0;
+
+                        println!("[SYSTEM] Station-keeping recovery burn scheduled for T+{:.0} seconds.", 
+                                 event.tca_offset_s + 3600.0);
+
+                        emergency_burns.push(ScheduleManeuver {
+                            satellite_id: numeric_id,
+                            burn_time_unix: recovery_time,
+                            // Exactly invert the thrust vector to nullify the velocity debt
+                            dv_x: -best_dv_x,
+                            dv_y: -best_dv_y,
+                            dv_z: -best_dv_z,
+                        });
+                        
+                        app.debris_avoided += 1;
+                    }
+                }
+            }
+        }
+    }
+    
+    if !emergency_burns.is_empty() {
+        app.engine.maneuver_queue.extend(emergency_burns);
+    }
+}
+
+fn check_los(pos_eci: (f64, f64, f64), time_unix: f64) -> bool {
+    let gmst = calculate_gmst(time_unix);
+    let sat_ecef = eci_to_ecef(pos_eci, gmst);
+
+    for &(gs_lat_deg, gs_lon_deg, gs_alt_m, gs_min_elev) in GROUND_STATIONS {
+        let gs_lat_rad = gs_lat_deg.to_radians();
+        let gs_lon_rad = gs_lon_deg.to_radians();
+        let gs_ecef = geodetic_to_ecef(gs_lat_rad, gs_lon_rad, gs_alt_m / 1000.0);
+        let elevation = calculate_elevation_angle(sat_ecef, gs_lat_rad, gs_lon_rad, gs_ecef);
+        
+        if elevation >= gs_min_elev {
+            return true;
+        }
+    }
+    false
 }

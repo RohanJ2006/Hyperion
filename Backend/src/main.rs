@@ -4,6 +4,7 @@ mod maths;
 mod models;
 mod physics;
 mod conjunction;
+mod conjunction_types;
 
 use axum::{
     routing::{get, post},
@@ -17,7 +18,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::api::*;
-use crate::physics::SimState;
+use crate::physics::{SimState, ScheduleManeuver};
 use crate::conjunction::{ConjunctionEvent};
 use crate::constants::API_PORT;
 
@@ -29,6 +30,9 @@ pub struct AppState {
     /// Cache of active CDM warnings from the last 24-hour prediction run.
     /// Updated on every simulate/step call.
     pub active_conjunctions: Vec<ConjunctionEvent>,
+    pub debris_avoided: usize,
+    pub last_screening_time: f64, // Track the simulation time of the last scan
+    pub uplink_queue: Vec<ScheduleManeuver>,
 }
 
 pub type SharedState = Arc<RwLock<AppState>>;
@@ -48,6 +52,9 @@ async fn main() {
         // Matches the timestamp used throughout the problem statement examples.
         current_time_unix: 1_773_216_000.0,
         active_conjunctions: Vec::new(),
+        debris_avoided: 0,
+        last_screening_time: 0.0,
+        uplink_queue: Vec::new(),
     };
 
     let shared_state: SharedState = Arc::new(RwLock::new(state));
@@ -62,6 +69,7 @@ async fn main() {
         .route("/api/maneuver/schedule",        post(schedule_maneuver))
         .route("/api/simulate/step",            post(simulate_step))
         .route("/api/visualization/snapshot",  get(get_snapshot))
+        .route("/ws/telemetry", get(ws_telemetry_handler))
         .fallback_service(ServeDir::new("../frontend/dist"))
         .layer(cors)
         .with_state(shared_state);

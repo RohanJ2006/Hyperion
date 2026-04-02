@@ -1,4 +1,4 @@
-import { type visualSnapshot } from "./apiClient";
+import { fetchSnapshot , type visualSnapshot } from "./apiClient";
 import { fetchAnalytics, type AnalyticsSnapshot } from './apiClient';
 
 export type stateListener = (data:visualSnapshot) => void; //snapshot 
@@ -29,13 +29,7 @@ export function createState(): stateManagement {
 
   async function poll() : Promise<void>{
     try {
-      // If running dev server, point to Rust. If built with Bun, use relative path.
-      const isDev = import.meta.env.DEV;
-      const baseUrl = isDev ? 'http://localhost:8000' : '';
-      
-      const res = await fetch(`${baseUrl}/api/visualization/snapshot`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const snapshot: visualSnapshot = await res.json();
+      const snapshot = await fetchSnapshot();
       notify(snapshot);
     } catch {}
   }

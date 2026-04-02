@@ -18,12 +18,12 @@ export function initializeTelemetryStream (
 
   function connect():void{
     if(ws) return ;
-    // ws = new WebSocket('websocket.url'); // this needs to be changed with the url from the backend
-    const isDev = import.meta.env.DEV;
+    
+    // Dynamically build the websocket url
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = isDev ? 'localhost:8000' : window.location.host;
-    // You will eventually need to add the /ws/telemetry WebSocket route in your Axum main.rs to actually push the Float64Array data, but this gets the frontend pointing to the right place
-    ws = new WebSocket(`${wsProtocol}//${wsHost}/ws/telemetry`); 
+    const wsHost = window.location.host;
+    
+    ws = new WebSocket(`${wsProtocol}//${wsHost}/ws/telemetry`);
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = ()=> {
@@ -37,7 +37,7 @@ export function initializeTelemetryStream (
         : incoming;
       const entityCount = (safeIncoming.length / floatsPerEntity) | 0;
 
-      sharedMemory.set(incoming);
+      sharedMemory.set(safeIncoming);
 
       onData(entityCount);
     };

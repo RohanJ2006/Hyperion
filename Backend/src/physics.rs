@@ -16,7 +16,7 @@ pub fn parse_api_id(string_id: &str) -> (u32, bool) {
     (numeric_id, is_satellite)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ScheduleManeuver {
     pub satellite_id: u32,
     pub burn_time_unix: f64,
@@ -252,19 +252,5 @@ impl SimState {
                 dv_z: dv_eci.2,
             });
         }
-    }
-
-    /// Returns IDs of all satellites currently outside their 10 km station-keeping box.
-    pub fn check_station_keeping(&self) -> Vec<u32> {
-        self.id.iter().enumerate()
-            .filter(|&(i, _)| {
-                if !self.is_satellite[i] { return false; }
-                let drift_sq = (self.x[i] - self.nx[i]).powi(2)
-                    + (self.y[i] - self.ny[i]).powi(2)
-                    + (self.z[i] - self.nz[i]).powi(2);
-                drift_sq > DRIFT_TOLERANCE * DRIFT_TOLERANCE
-            })
-            .map(|(_, &id)| id)
-            .collect()
     }
 }
