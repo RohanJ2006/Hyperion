@@ -2,3 +2,4 @@
 /frontend/dist/
 /frontend/wasm_core/target/
 /Backend/target/
+/Backend/logs/
