@@ -78,7 +78,7 @@ COPY --from=backend-builder /app/Backend/target/release/hyperion ./hyperion
 
 # Copy the built frontend into the path the backend expects
 # Our ServeDir points to "../frontend/dist" relative to the binary
-COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+COPY --from=frontend-builder /app/frontend/dist ../frontend/dist
 
 # Expose port as required by the problem statement
 EXPOSE 8000
