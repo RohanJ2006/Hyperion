@@ -17,6 +17,7 @@ use crate::physics::{parse_api_id, ScheduleManeuver};
 use crate::maths::{eci_to_geodetic, eci_to_ecef, calculate_elevation_angle, calculate_fuel_burn, calculate_gmst, geodetic_to_ecef, rtn_to_eci};
 use crate::conjunction::{screen_from_sim_state, ObjectSnapshot, brent_tca_multi};
 use crate::constants::*;
+use crate::audit::{record_maneuver, ManeuverLog};
 use crate::SharedState;
 
 // Converts an ISO 8601 timestamp string to a Unix timestamp (f64 seconds).
@@ -527,6 +528,24 @@ fn evaluate_autonomous_evasion(app: &mut AppState) {
                             dv_y: best_dv_y,
                             dv_z: best_dv_z,
                         });
+
+                        // We use the app current time (unix timestamp) and not the system time due to simulate_step
+                        let current_sim_time_iso = chrono::DateTime::from_timestamp(app.current_time_unix as i64, 0)
+                            .unwrap_or_default()
+                            .to_rfc3339();
+
+                        // Logging the Evasion Maneuver
+                        record_maneuver(ManeuverLog {
+                            log_timestamp: current_sim_time_iso.clone(),
+                            event_type: "EVASION_SCHEDULED".to_string(),
+                            satellite_id: numeric_id,
+                            threat_id: Some(event.debris_id),
+                            pca_km: Some(final_pca),
+                            dv_x: best_dv_x,
+                            dv_y: best_dv_y,
+                            dv_z: best_dv_z,
+                            execution_time: evasion_time,
+                        });
                         
                         // 2. Schedule the Station-Keeping Recovery Burn
                         // We must wait until the debris has safely passed. 
@@ -544,6 +563,19 @@ fn evaluate_autonomous_evasion(app: &mut AppState) {
                             dv_x: -best_dv_x,
                             dv_y: -best_dv_y,
                             dv_z: -best_dv_z,
+                        });
+                        
+                        // Logging the Recovery Maneuver
+                        record_maneuver(ManeuverLog {
+                            log_timestamp: current_sim_time_iso,
+                            event_type: "RECOVERY_SCHEDULED".to_string(),
+                            satellite_id: numeric_id,
+                            threat_id: None,
+                            pca_km: None,
+                            dv_x: -best_dv_x,
+                            dv_y: -best_dv_y,
+                            dv_z: -best_dv_z,
+                            execution_time: recovery_time,
                         });
                         
                         app.debris_avoided += 1;
