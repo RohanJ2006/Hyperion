@@ -5,6 +5,7 @@ mod models;
 mod physics;
 mod conjunction;
 mod conjunction_types;
+mod audit;
 
 use axum::{
     routing::{get, post},

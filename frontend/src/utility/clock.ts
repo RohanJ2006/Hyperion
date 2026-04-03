@@ -1,4 +1,3 @@
-
 const updateClock = ():void => {
     const clockEl = document.getElementById('clock') as HTMLElement || null;
     if (clockEl) {
@@ -11,4 +10,3 @@ const updateClock = ():void => {
 };
 
 export default updateClock;
-

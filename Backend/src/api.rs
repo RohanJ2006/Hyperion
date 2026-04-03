@@ -15,8 +15,9 @@ use simd_json::from_slice;
 use crate::models::*;
 use crate::physics::{parse_api_id, ScheduleManeuver};
 use crate::maths::{eci_to_geodetic, eci_to_ecef, calculate_elevation_angle, calculate_fuel_burn, calculate_gmst, geodetic_to_ecef, rtn_to_eci};
-use crate::conjunction::{screen_from_sim_state, ObjectSnapshot};
+use crate::conjunction::{screen_from_sim_state, ObjectSnapshot, brent_tca_multi};
 use crate::constants::*;
+use crate::audit::{record_maneuver, ManeuverLog};
 use crate::SharedState;
 
 // Converts an ISO 8601 timestamp string to a Unix timestamp (f64 seconds).
@@ -86,9 +87,11 @@ pub async fn ingest_telemetry(
                 }
             }
 
-            let active_warnings = app.active_conjunctions.len();
-
+            // Run the evasion first to process the new telemetry
             evaluate_autonomous_evasion(&mut app);
+
+            // now reading the length, so it captures the fresh state
+            let active_warnings = app.active_conjunctions.len();            
 
             let response = TelemetryResponse {
                 status: "ACK".to_string(),
@@ -276,25 +279,6 @@ pub async fn schedule_maneuver(
     // For LOS purpose
     let has_los = check_los(sat_eci, app.current_time_unix);
     let is_blackout = !has_los;
-
-    let mut has_los = false;
-    for &(gs_lat_deg, gs_lon_deg, gs_alt_m, gs_min_elev) in GROUND_STATIONS {
-        let gs_lat_rad = gs_lat_deg.to_radians();
-        let gs_lon_rad = gs_lon_deg.to_radians();
-        let gs_ecef = geodetic_to_ecef(gs_lat_rad, gs_lon_rad, gs_alt_m / 1000.0);
-        let elevation = calculate_elevation_angle(sat_ecef, gs_lat_rad, gs_lon_rad, gs_ecef);
-        if elevation >= gs_min_elev {
-            has_los = true;
-            break;
-        }
-    }
-
-    if !has_los {
-        return (StatusCode::BAD_REQUEST, Json(ManeuverResponse {
-            status: "REJECTED: Communications blackout".to_string(),
-            validation: ManeuverValidation { ground_station_los: false, sufficient_fuel: true, projected_mass_remaining_kg: app.engine.mass[index] },
-        }));
-    }
 
     // ---- Validate and queue each burn ----
     let mut current_mass = app.engine.mass[index];
@@ -520,16 +504,19 @@ fn evaluate_autonomous_evasion(app: &mut AppState) {
                         };
 
                         // 4. Run the Trial Ephemeris through the Brent algorithm
-                        let (_, pca_pro) = crate::conjunction::brent_tca_multi(&sat_pro, &deb_snap, PREDICTION_WINDOW as f64);
-                        let (_, pca_ret) = crate::conjunction::brent_tca_multi(&sat_ret, &deb_snap, PREDICTION_WINDOW as f64);
+                        let (tca_pro, pca_pro) = brent_tca_multi(&sat_pro, &deb_snap, PREDICTION_WINDOW as f64);
+                        let (tca_ret, pca_ret) = brent_tca_multi(&sat_ret, &deb_snap, PREDICTION_WINDOW as f64);
 
-                        let (best_dv_x, best_dv_y, best_dv_z, final_pca, burn_type) = if pca_pro >= pca_ret {
-                            (dv_x_pro, dv_y_pro, dv_z_pro, pca_pro, "PROGRADE")
+
+                        // 5. Select the maneuver that yields the safest distance
+                        let (best_dv_x, best_dv_y, best_dv_z, final_pca, post_burn_tca, burn_type) = if pca_pro >= pca_ret {
+                            (dv_x_pro, dv_y_pro, dv_z_pro, pca_pro, tca_pro, "PROGRADE")
                         } else {
-                            (dv_x_ret, dv_y_ret, dv_z_ret, pca_ret, "RETROGRADE")
+                            (dv_x_ret, dv_y_ret, dv_z_ret, pca_ret, tca_ret, "RETROGRADE")
                         };
 
-                        println!("[SYSTEM] Selected {} burn. Improved miss distance to {:.3} km.", burn_type, final_pca);
+                        println!("[SYSTEM] Selected {} burn. Improved miss distance to {:.3} km. New TCA: {:.0}s.", 
+                                 burn_type, final_pca, post_burn_tca);                        
 
                         // 1. Schedule the Evasion Burn (15 seconds from now)
                         let evasion_time = app.current_time_unix + 15.0;
@@ -541,15 +528,33 @@ fn evaluate_autonomous_evasion(app: &mut AppState) {
                             dv_y: best_dv_y,
                             dv_z: best_dv_z,
                         });
+
+                        // We use the app current time (unix timestamp) and not the system time due to simulate_step
+                        let current_sim_time_iso = chrono::DateTime::from_timestamp(app.current_time_unix as i64, 0)
+                            .unwrap_or_default()
+                            .to_rfc3339();
+
+                        // Logging the Evasion Maneuver
+                        record_maneuver(ManeuverLog {
+                            log_timestamp: current_sim_time_iso.clone(),
+                            event_type: "EVASION_SCHEDULED".to_string(),
+                            satellite_id: numeric_id,
+                            threat_id: Some(event.debris_id),
+                            pca_km: Some(final_pca),
+                            dv_x: best_dv_x,
+                            dv_y: best_dv_y,
+                            dv_z: best_dv_z,
+                            execution_time: evasion_time,
+                        });
                         
                         // 2. Schedule the Station-Keeping Recovery Burn
                         // We must wait until the debris has safely passed. 
                         // event.tca_offset_s gives us the exact seconds until closest approach.
                         // We add a 3600-second (1 hour) safety buffer before initiating recovery.
-                        let recovery_time = app.current_time_unix + event.tca_offset_s + 3600.0;
+                        let recovery_time = app.current_time_unix + post_burn_tca + 3600.0;
 
                         println!("[SYSTEM] Station-keeping recovery burn scheduled for T+{:.0} seconds.", 
-                                 event.tca_offset_s + 3600.0);
+                                 post_burn_tca + 3600.0);
 
                         emergency_burns.push(ScheduleManeuver {
                             satellite_id: numeric_id,
@@ -558,6 +563,19 @@ fn evaluate_autonomous_evasion(app: &mut AppState) {
                             dv_x: -best_dv_x,
                             dv_y: -best_dv_y,
                             dv_z: -best_dv_z,
+                        });
+                        
+                        // Logging the Recovery Maneuver
+                        record_maneuver(ManeuverLog {
+                            log_timestamp: current_sim_time_iso,
+                            event_type: "RECOVERY_SCHEDULED".to_string(),
+                            satellite_id: numeric_id,
+                            threat_id: None,
+                            pca_km: None,
+                            dv_x: -best_dv_x,
+                            dv_y: -best_dv_y,
+                            dv_z: -best_dv_z,
+                            execution_time: recovery_time,
                         });
                         
                         app.debris_avoided += 1;
