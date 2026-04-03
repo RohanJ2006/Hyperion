@@ -71,7 +71,7 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+WORKDIR /app/Backend
 
 # Copy the compiled binary
 COPY --from=backend-builder /app/Backend/target/release/hyperion ./hyperion
